@@ -55,6 +55,9 @@ class TrainConfig:
     lambda_: float = 1.0
     seed: int = 42
     normalize: bool = True
+    #: The evaluation harness fits dozens of models; their per-iteration logs
+    #: would bury the report it is trying to print.
+    verbose: bool = True
 
 
 @dataclass
@@ -126,7 +129,7 @@ def train(matrices: RatingMatrices, cfg: TrainConfig) -> TrainResult:
 
         cost_value = float(cost)
         history.append(cost_value)
-        if iteration % LOG_EVERY == 0 or iteration == cfg.iterations - 1:
+        if cfg.verbose and (iteration % LOG_EVERY == 0 or iteration == cfg.iterations - 1):
             print(f"  iteration {iteration:5d}  cost {cost_value:14,.4f}")
 
     seconds = time.perf_counter() - started
