@@ -91,6 +91,30 @@ def latest_version(root: Path) -> str | None:
     return versions[-1] if versions else None
 
 
+def read_metadata(root: Path, version: str) -> dict[str, Any]:
+    """Model card for one version, or an empty dict if it has none."""
+    path = root / version / METADATA_FILE
+    if not path.exists():
+        return {}
+    loaded: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return loaded
+
+
+def latest_version_for_mode(root: Path, mode: str) -> str | None:
+    """Newest version trained in a given feedback mode.
+
+    Selecting purely by "newest" is a trap once both explicit and implicit
+    models are on disk: the two learn different feature spaces, and a caller
+    that wants rating-based item similarity would silently get whichever run
+    happened to finish last.
+    """
+    for version in reversed(list_versions(root)):
+        metadata = read_metadata(root, version)
+        if metadata.get("hyperparameters", {}).get("mode") == mode:
+            return version
+    return None
+
+
 def next_version_dir(root: Path) -> Path:
     """Allocate the next unused ``models/v{n}`` directory."""
     existing = list_versions(root)
@@ -124,15 +148,33 @@ def save_cf_artifacts(
     return directory
 
 
-def load_cf_artifacts(root: Path, version: str | None = None) -> CFArtifacts:
-    """Load a trained model. Defaults to the newest version present.
+def load_cf_artifacts(
+    root: Path, version: str | None = None, *, mode: str | None = None
+) -> CFArtifacts:
+    """Load a trained model.
+
+    Args:
+        root: the ``models/`` directory.
+        version: an explicit version name. Wins over ``mode``.
+        mode: restrict to the newest model trained in this feedback mode.
 
     Raises:
-        FileNotFoundError: if no trained model exists, with the command that
+        FileNotFoundError: if no matching model exists, naming the command that
             would produce one - a missing model is a setup step not yet run,
             not a mystery to debug.
     """
-    resolved = version or latest_version(root)
+    if version is not None:
+        resolved: str | None = version
+    elif mode is not None:
+        resolved = latest_version_for_mode(root, mode)
+        if resolved is None:
+            raise FileNotFoundError(
+                f"No {mode} model found under {root}. "
+                f"Run `python -m ml.train_cf --mode {mode}` first."
+            )
+    else:
+        resolved = latest_version(root)
+
     if resolved is None:
         raise FileNotFoundError(
             f"No trained model found under {root}. Run `python -m ml.train_cf` first."
