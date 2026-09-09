@@ -18,7 +18,7 @@ Built milestone by milestone. Current progress:
 
 - [x] **M1** — schema, migrations, clustered seed data
 - [x] **M2** — collaborative filtering training pipeline
-- [ ] **M3** — evaluation harness and baseline comparison
+- [x] **M3** — evaluation harness and baseline comparison
 - [ ] **M4** — FastAPI backend
 - [ ] **M5** — Next.js frontend
 - [ ] **M6** — two-tower content model, hybrid scoring, retrieval + ranking
@@ -92,6 +92,24 @@ bottom of a 1–5 scale, ranking the entire menu identically badly. Training on
 mean-centred data and adding `mu[i]` back means that user instead sees each
 dish's average rating. Verified against a trained model: the cold user's
 predictions match the item means to 3.4e-10.
+
+## Results
+
+Held-out test set, per-user chronological split. Full detail and the
+limitations that qualify these numbers are in
+[`docs/EVALUATION.md`](docs/EVALUATION.md).
+
+| model | RMSE ↓ | NDCG@10 ↑ | coverage ↑ |
+| --- | --- | --- | --- |
+| global mean | 0.9689 | 0.0257 | 6.3% |
+| item mean | 0.8870 | 0.0331 | 5.0% |
+| most popular | — | 0.0681 | 14.6% |
+| **collaborative filtering** | **0.7268** | **0.0908** | **74.2%** |
+
+Collaborative filtering beats item-mean by 18.1% on RMSE and 174% on NDCG@10,
+while reaching 74.2% of the menu instead of 5%. It is also close to
+popularity-neutral: 10.3% of its recommendations land in the top popularity
+decile, against 99.5% for the most-popular baseline.
 
 ## Documentation
 
