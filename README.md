@@ -17,7 +17,7 @@ Every recommendation carries a human-readable `reason` ("because you liked Kacch
 Built milestone by milestone. Current progress:
 
 - [x] **M1** — schema, migrations, clustered seed data
-- [ ] **M2** — collaborative filtering training pipeline
+- [x] **M2** — collaborative filtering training pipeline
 - [ ] **M3** — evaluation harness and baseline comparison
 - [ ] **M4** — FastAPI backend
 - [ ] **M5** — Next.js frontend
@@ -68,6 +68,30 @@ Ratings are generated from three latent taste clusters. `verify_clusters`
 confirms k-means can rediscover them from the matrix alone, with no labels:
 purity 0.937, Adjusted Rand Index 0.815 against a 0.417 majority-class
 baseline.
+
+## Training
+
+```bash
+cd backend
+python -m ml.train_cf                     # explicit ratings, squared error
+python -m ml.train_cf --mode implicit     # impression log, cross-entropy
+python -m ml.train_cf --lambda 5 --iterations 600
+```
+
+Each run writes a new `models/v{n}/` containing the weights, the id maps, a
+loss curve and a `metadata.json` model card. Training is always an offline job;
+the API only ever loads artifacts read-only.
+
+The vectorized cost function is checked against a loop transcription of the
+same formula on every test run — they agree to within 1e-11, against the 1e-4
+the spec requires.
+
+**On mean normalization.** A user who has rated nothing ends with `W[j] = 0`
+and `b[0,j] = 0`, so their raw prediction for every dish is zero — below the
+bottom of a 1–5 scale, ranking the entire menu identically badly. Training on
+mean-centred data and adding `mu[i]` back means that user instead sees each
+dish's average rating. Verified against a trained model: the cold user's
+predictions match the item means to 3.4e-10.
 
 ## Documentation
 
