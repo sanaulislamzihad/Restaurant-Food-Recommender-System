@@ -1,9 +1,4 @@
-"""FastAPI application.
-
-M1 exposes health endpoints only, so the container has a real entrypoint and the
-compose healthcheck has something to call. The menu, auth, ratings, orders and
-recommendation routers arrive in M4.
-"""
+"""FastAPI application."""
 
 from typing import Literal
 
@@ -12,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from app.api.router import api_router
 from app.core.config import get_settings
 from app.db.session import engine
 
@@ -41,6 +37,9 @@ class ReadinessResponse(BaseModel):
     status: Literal["ready", "degraded"]
     database: bool
     dialect: str
+
+
+app.include_router(api_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])

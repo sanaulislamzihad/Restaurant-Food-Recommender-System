@@ -59,7 +59,8 @@ def squared_distances(X: np.ndarray) -> np.ndarray:
     """
     squared_norms = np.sum(X**2, axis=1)
     distances = squared_norms[:, None] + squared_norms[None, :] - 2.0 * (X @ X.T)
-    return np.maximum(distances, 0.0)
+    clamped: np.ndarray = np.maximum(distances, 0.0)
+    return clamped
 
 
 def top_neighbors(X: np.ndarray, top_n: int = 10) -> list[list[tuple[int, float]]]:
