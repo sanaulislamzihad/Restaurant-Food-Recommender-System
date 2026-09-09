@@ -1,0 +1,73 @@
+# Postgres + Redis + API. This is the configuration the project targets; local
+# development can also run with no services at all by pointing DATABASE_URL at
+# SQLite and leaving REDIS_URL empty.
+#
+# The `web` service arrives in M5 with the Next.js app. It is left out rather
+# than stubbed, because a service pointing at a build context that does not
+# exist would break `docker compose up` for everything else.
+
+name: foodrec
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-foodrec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-foodrec}
+      POSTGRES_DB: ${POSTGRES_DB:-foodrec}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      # The API waits on this, so it must report readiness rather than liveness:
+      # Postgres accepts connections briefly during init before it is usable.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-foodrec} -d ${POSTGRES_DB:-foodrec}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-foodrec}:${POSTGRES_PASSWORD:-foodrec}@db:5432/${POSTGRES_DB:-foodrec}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env before starting}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # Trained artifacts are written by the offline training job and read by
+      # the API, so they live outside the image.
+      - model_artifacts:/srv/app/models
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  model_artifacts:
