@@ -1,0 +1,7 @@
+# Normalize line endings so the repo stays LF regardless of contributor OS.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.npz binary
+*.keras binary
