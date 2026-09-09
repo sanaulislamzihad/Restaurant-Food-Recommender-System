@@ -46,7 +46,28 @@ py -3.11 -m venv .venv && source .venv/Scripts/activate   # Windows (Git Bash)
 pip install -e ".[dev]"
 alembic upgrade head
 python -m scripts.seed
+python -m scripts.verify_clusters   # proves the seeded matrix has real structure
 ```
+
+That runs with no Docker, Postgres or Redis: the SQLite default in
+`.env.example` is enough. `docker compose up` brings up the Postgres + Redis
+configuration instead.
+
+### What the seed produces
+
+| | |
+| --- | --- |
+| Restaurants / menu items | 8 / 302 |
+| Users / ratings | 500 / 14,998 |
+| Orders / impressions | 7,645 / 55,813 |
+| Matrix density | 9.93% |
+| Cold-start users (< 5 ratings) | 25, of which 6 have none |
+| Cold-start items (< 3 ratings) | 9, of which 3 have none |
+
+Ratings are generated from three latent taste clusters. `verify_clusters`
+confirms k-means can rediscover them from the matrix alone, with no labels:
+purity 0.937, Adjusted Rand Index 0.815 against a 0.417 majority-class
+baseline.
 
 ## Documentation
 
