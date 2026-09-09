@@ -1,0 +1,46 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Environment ----
+.env
+.env.local
+*.local
+
+# ---- Databases ----
+# Local SQLite dev databases are disposable; regenerate with `python -m scripts.seed`.
+*.db
+*.db-journal
+*.sqlite3
+
+# ---- ML artifacts ----
+# Trained weights are large and reproducible from the seed + training CLI.
+# The metadata JSON model cards ARE committed so the repo records what was trained.
+backend/models/**/*.npz
+backend/models/**/*.keras
+backend/models/**/*.png
+backend/models/**/*.h5
+
+# ---- Node / Next.js ----
+node_modules/
+.next/
+out/
+build/
+dist/
+.turbo/
+next-env.d.ts
+
+# ---- Editors / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

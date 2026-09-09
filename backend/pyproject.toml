@@ -1,0 +1,91 @@
+[project]
+name = "foodrec-backend"
+version = "0.1.0"
+description = "Restaurant food recommender - collaborative filtering + two-tower content model"
+requires-python = ">=3.11"
+
+# Runtime dependencies for serving. Note that TensorFlow is deliberately NOT
+# here: collaborative-filtering inference is a dot product against saved numpy
+# arrays, so the API container stays small. Training pulls the `ml` extra.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14",
+    "psycopg[binary]>=3.2",
+    "redis>=5.2",
+    "pyjwt>=2.10",
+    "bcrypt>=4.2",
+    "python-multipart>=0.0.17",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+ml = [
+    "tensorflow>=2.16",
+    "matplotlib>=3.9",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+    "ruff>=0.8",
+    "black>=24.10",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app", "ml", "scripts"]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "C4", "ARG", "PTH"]
+ignore = [
+    "E741",  # ambiguous names: the ML module uses `l` and single-capital math names
+    "N803",  # argument name should be lowercase: X, W, Y, R mirror the formulation
+    "N806",  # variable in function should be lowercase: same reason
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The ML modules intentionally mirror Andrew Ng's notation (X, W, b, Y, R, mu).
+"ml/*.py" = ["N802", "N803", "N806"]
+"tests/*.py" = ["ARG001", "N803", "N806"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+no_implicit_optional = true
+check_untyped_defs = true
+plugins = []
+
+[[tool.mypy.overrides]]
+# These ship without complete stubs.
+module = ["tensorflow.*", "matplotlib.*", "redis.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: tests that train a model or touch the full seed (deselect with '-m \"not slow\"')",
+]
