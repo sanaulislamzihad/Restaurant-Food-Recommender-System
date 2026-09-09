@@ -30,6 +30,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import bcrypt
@@ -194,6 +195,9 @@ class SeedConfig:
     negatives_per_positive: int = 3
     random_seed: int = 42
     reset: bool = False
+    #: Where to write the cluster-label sidecar. Overridable so tests do not
+    #: clobber the development seed's metadata.
+    meta_path: Path | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +219,8 @@ def _cuisine_sampling_weights(cluster: str, cuisines: list[str]) -> np.ndarray:
     """
     affinity = np.array([CLUSTER_AFFINITY[cluster][c] for c in cuisines], dtype=np.float64)
     weights = np.exp(1.15 * (affinity - affinity.mean()))
-    return weights / weights.sum()
+    normalised: np.ndarray = weights / weights.sum()
+    return normalised
 
 
 def _rating_counts(rng: np.random.Generator, cfg: SeedConfig) -> np.ndarray:
@@ -703,7 +708,7 @@ def seed(cfg: SeedConfig) -> dict[str, Any]:
         },
     }
 
-    meta_path = BACKEND_DIR / "data" / "seed_meta.json"
+    meta_path = cfg.meta_path or (BACKEND_DIR / "data" / "seed_meta.json")
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary

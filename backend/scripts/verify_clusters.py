@@ -118,14 +118,16 @@ def centered_user_vectors(matrix: Matrix) -> np.ndarray:
     item_means = (matrix.Y * matrix.R).sum(axis=1) / safe_counts
 
     centered = (matrix.Y - item_means[:, None]) * matrix.R
-    return centered.T
+    user_vectors: np.ndarray = centered.T
+    return user_vectors
 
 
 def cosine_similarity(vectors: np.ndarray) -> np.ndarray:
     norms = np.linalg.norm(vectors, axis=1, keepdims=True)
     norms = np.where(norms == 0, 1.0, norms)
     unit = vectors / norms
-    return unit @ unit.T
+    similarity: np.ndarray = unit @ unit.T
+    return similarity
 
 
 def kmeans(vectors: np.ndarray, k: int, seed: int = 0, restarts: int = 10) -> np.ndarray:
