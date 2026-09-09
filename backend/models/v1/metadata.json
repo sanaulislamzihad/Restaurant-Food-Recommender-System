@@ -1,0 +1,29 @@
+{
+  "saved_at": "2026-09-09T16:38:47.393848+00:00",
+  "model": "collaborative_filtering",
+  "trained_at": "2026-09-09T16:38:47.386560+00:00",
+  "hyperparameters": {
+    "mode": "explicit",
+    "n_features": 10,
+    "iterations": 400,
+    "learning_rate": 0.1,
+    "lambda": 1.0,
+    "seed": 42,
+    "mean_normalized": true,
+    "init_scale": 0.1
+  },
+  "data": {
+    "n_items": 302,
+    "n_users": 500,
+    "n_observed": 14998,
+    "density": 0.099325,
+    "fingerprint": "52b3d7b0fa23b75b"
+  },
+  "training_metrics": {
+    "train_rmse": 0.305892,
+    "train_mae": 0.243131,
+    "final_cost": 1387.816392
+  },
+  "runtime_seconds": 8.75,
+  "tensorflow_version": "2.21.0"
+}

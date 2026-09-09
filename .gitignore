@@ -22,12 +22,13 @@ htmlcov/
 *.sqlite3
 
 # ---- ML artifacts ----
-# Trained weights are large and reproducible from the seed + training CLI.
-# The metadata JSON model cards ARE committed so the repo records what was trained.
-backend/models/**/*.npz
-backend/models/**/*.keras
-backend/models/**/*.png
-backend/models/**/*.h5
+# Trained weights, curves and id maps are large and fully reproducible from the
+# seed plus the training CLI, so they stay out of the repo. The metadata JSON
+# model cards ARE committed: they are small, and they let a reviewer see what
+# was trained and how it scored without running anything.
+backend/models/**
+!backend/models/**/
+!backend/models/**/metadata.json
 
 # ---- Node / Next.js ----
 node_modules/
