@@ -1,101 +1,164 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useQuery } from "@tanstack/react-query";
+import { ArrowRight, Info } from "lucide-react";
+import Link from "next/link";
+
+import { DishRow } from "@/components/dish-row";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/primitives";
+import { api } from "@/lib/api";
+import { CUISINE_STYLES, cuisineStyle } from "@/lib/cuisine";
+import { humanise } from "@/lib/utils";
+import { useAuth } from "@/providers/app-providers";
+
+export default function HomePage() {
+  const { user, isLoading: authLoading } = useAuth();
+
+  const recommended = useQuery({
+    queryKey: ["recommendations", "for-me", user?.id],
+    queryFn: () => api.recommendationsForMe(12),
+    enabled: Boolean(user),
+  });
+
+  const popular = useQuery({
+    queryKey: ["recommendations", "popular"],
+    queryFn: () => api.popular(12),
+  });
+
+  const cuisines = useQuery({
+    queryKey: ["cuisines"],
+    queryFn: () => api.cuisines(),
+  });
+
+  const feed = recommended.data;
+  // Only claim personalisation when the API says it personalised. A cold-start
+  // response is a popularity list, and labelling it "picked for you" would be a
+  // small lie the user can immediately detect.
+  const isPersonalised = Boolean(feed && !feed.is_cold_start);
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    <div className="space-y-12">
+      <section className="overflow-hidden rounded-lg border border-border bg-gradient-to-br from-accent-soft to-background">
+        <div className="grid gap-6 p-6 sm:p-10 md:grid-cols-[1.3fr_1fr] md:items-center">
+          <div className="space-y-4">
+            <p className="text-xs font-semibold uppercase tracking-widest text-accent">
+              Dhaka · delivered
+            </p>
+            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+              Food chosen by what you actually order
+            </h1>
+            <p className="max-w-prose text-muted-foreground">
+              Kacchi from Dhanmondi, pizza from Banani, mishti from wherever you
+              are. The more you rate, the better the suggestions get.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Link href="/menu">
+                <Button size="lg">
+                  Browse the menu <ArrowRight aria-hidden="true" />
+                </Button>
+              </Link>
+              {!user && !authLoading ? (
+                <Link href="/register">
+                  <Button size="lg" variant="secondary">
+                    Create an account
+                  </Button>
+                </Link>
+              ) : null}
+            </div>
+          </div>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            {Object.entries(CUISINE_STYLES)
+              .slice(0, 9)
+              .map(([key, style]) => (
+                <Link
+                  key={key}
+                  href={`/menu?cuisine=${key}`}
+                  aria-label={`Browse ${style.label}`}
+                  className={`grid aspect-square place-items-center rounded-lg bg-gradient-to-br text-3xl transition-transform hover:scale-105 ${style.gradient}`}
+                >
+                  <span aria-hidden="true">{style.glyph}</span>
+                </Link>
+              ))}
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+      </section>
+
+      {user ? (
+        <div className="space-y-3">
+          <DishRow
+            title={isPersonalised ? "Recommended for you" : "Popular to get you started"}
+            subtitle={
+              isPersonalised
+                ? "Learned from your ratings and from customers with a similar taste profile."
+                : "Rate a few dishes and this row becomes personal to you."
+            }
+            items={feed?.items ?? []}
+            isLoading={recommended.isLoading}
+            emptyMessage="No recommendations yet — rate a few dishes to get started."
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+          {feed && !isPersonalised ? (
+            <Card className="flex items-start gap-3 bg-muted/50 p-3 text-sm text-muted-foreground">
+              <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <p>
+                You have rated too few dishes for the model to have an opinion
+                yet, so this row is simply what is popular. Five ratings is
+                enough to switch it over.
+              </p>
+            </Card>
+          ) : null}
+        </div>
+      ) : (
+        <DishRow
+          title="Popular right now"
+          subtitle="Sign in to get a row that learns from what you order."
+          items={popular.data?.items ?? []}
+          isLoading={popular.isLoading}
+          href="/menu"
+        />
+      )}
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold tracking-tight sm:text-xl">
+          Browse by cuisine
+        </h2>
+        {cuisines.isLoading ? (
+          <div className="flex flex-wrap gap-2">
+            {Array.from({ length: 9 }).map((_, index) => (
+              <div key={index} className="shimmer h-10 w-28 rounded-full bg-muted" />
+            ))}
+          </div>
+        ) : (
+          <ul className="flex flex-wrap gap-2">
+            {(cuisines.data ?? []).map((cuisine) => {
+              const style = cuisineStyle(cuisine);
+              return (
+                <li key={cuisine}>
+                  <Link
+                    href={`/menu?cuisine=${cuisine}`}
+                    className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-transform hover:scale-105 ${style.badge}`}
+                  >
+                    <span aria-hidden="true">{style.glyph}</span>
+                    {humanise(cuisine)}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      {user ? (
+        <DishRow
+          title="Popular right now"
+          subtitle="What everyone else is ordering this week."
+          items={popular.data?.items ?? []}
+          isLoading={popular.isLoading}
+          href="/menu"
+        />
+      ) : null}
     </div>
   );
 }

@@ -2,26 +2,122 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
+/*
+ * One accent colour — a warm orange — carried through every interactive
+ * element. Everything else is a warm neutral, so the accent is the only thing
+ * competing for attention and always means "you can act on this".
+ *
+ * Tokens are HSL triples rather than finished colours so Tailwind can compose
+ * them with opacity modifiers (`bg-accent/10`).
+ */
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: 30 40% 99%;
+    --foreground: 20 14% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 20 14% 12%;
+
+    --muted: 30 16% 95%;
+    --muted-foreground: 25 8% 42%;
+
+    --accent: 22 90% 46%;
+    --accent-foreground: 0 0% 100%;
+    --accent-soft: 26 95% 95%;
+
+    --border: 30 12% 88%;
+    --ring: 22 90% 46%;
+
+    --success: 152 55% 34%;
+    --danger: 0 72% 46%;
+
+    /* Chart marks get their own token rather than reusing --accent. The
+       dark-mode accent is tuned for buttons and sits at L 0.697, outside the
+       0.48-0.67 band a data mark needs against a dark surface. This step
+       (#DF590C) validates against both surfaces, so it is the same in both
+       themes and there is only one value to keep honest. */
+    --chart-1: 22 90% 46%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 24 12% 7%;
+    --foreground: 30 20% 95%;
+
+    --card: 24 10% 10%;
+    --card-foreground: 30 20% 95%;
+
+    --muted: 24 8% 15%;
+    --muted-foreground: 30 8% 62%;
+
+    --accent: 22 92% 55%;
+    --accent-foreground: 24 25% 8%;
+    --accent-soft: 22 40% 16%;
+
+    --border: 24 8% 20%;
+    --ring: 22 92% 55%;
+
+    --success: 152 45% 48%;
+    --danger: 0 70% 58%;
+
+    /* Deliberately not lightened for dark mode - see the note above. */
+    --chart-1: 22 90% 46%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* A visible, consistent focus ring everywhere — keyboard users should never
+     have to guess where they are. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  /* Horizontal carousels: scrollable, but without a scrollbar interrupting the
+     row of cards. Keyboard and trackpad scrolling still work. */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .shimmer {
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 0%,
+      hsl(var(--background)) 50%,
+      hsl(var(--muted)) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    to {
+      background-position: -200% 0;
+    }
+  }
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
+/* Respect a reduced-motion preference: the shimmer and every transition become
+   instant rather than merely faster. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
