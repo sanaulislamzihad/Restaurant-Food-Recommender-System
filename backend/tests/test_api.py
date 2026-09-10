@@ -21,6 +21,9 @@ from app.main import app
 from ml.artifacts import next_version_dir, save_cf_artifacts
 
 PASSWORD = "testpass123"
+#: Hashed once for the whole module. bcrypt is deliberately slow, and hashing
+#: three users per test was costing more than the tests themselves.
+PASSWORD_HASH = hash_password(PASSWORD)
 
 
 @pytest.fixture
@@ -77,7 +80,7 @@ def client() -> Iterator[TestClient]:
             user = User(
                 name=email.title(),
                 email=f"{email}@example.com",
-                password_hash=hash_password(PASSWORD),
+                password_hash=PASSWORD_HASH,
                 spice_tolerance=3,
             )
             db.add(user)

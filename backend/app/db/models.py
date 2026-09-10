@@ -25,9 +25,45 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 
 from app.db.base import Base
+
+
+class TZDateTime(TypeDecorator[datetime]):
+    """A timestamp that stays timezone-aware across a SQLite round trip.
+
+    SQLite has no native timestamp type. ``TZDateTime`` stores an
+    ISO string and silently drops the offset, so values read back are naive and
+    any client would interpret a UTC instant as local time. Postgres preserves
+    the offset, so without this the two backends disagree about what a stored
+    timestamp *means* - the worst kind of dialect difference, because nothing
+    raises and the numbers merely drift by the reader's UTC offset.
+
+    Everything is normalised to UTC on the way in and re-tagged as UTC on the
+    way out. A naive value is assumed to be UTC rather than rejected: the
+    impressions endpoint accepts client-supplied timestamps, and a 500 on
+    fire-and-forget telemetry would be a worse outcome than the assumption.
+    """
+
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 def _utcnow() -> datetime:
@@ -84,9 +120,7 @@ class User(Base):
     area: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     # 0 = cannot handle any heat, 5 = wants it as hot as the kitchen can make it.
     spice_tolerance: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, default=_utcnow)
 
     ratings: Mapped[list["Rating"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -123,9 +157,7 @@ class FoodItem(Base):
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ingredient_tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     is_available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, default=_utcnow)
 
     restaurant: Mapped["Restaurant"] = relationship(back_populates="food_items")
     ratings: Mapped[list["Rating"]] = relationship(
@@ -148,9 +180,7 @@ class Rating(Base):
         ForeignKey("food_items.id", ondelete="CASCADE"), nullable=False
     )
     rating: Mapped[Decimal] = mapped_column(Numeric(2, 1), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, default=_utcnow)
 
     user: Mapped["User"] = relationship(back_populates="ratings")
     food_item: Mapped["FoodItem"] = relationship(back_populates="ratings")
@@ -177,9 +207,7 @@ class Order(Base):
         nullable=False,
         default=OrderStatus.PENDING,
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, default=_utcnow)
 
     user: Mapped["User"] = relationship(back_populates="orders")
     items: Mapped[list["OrderItem"]] = relationship(
@@ -228,9 +256,7 @@ class Impression(Base):
         ForeignKey("food_items.id", ondelete="CASCADE"), nullable=False
     )
     was_ordered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    shown_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=_utcnow
-    )
+    shown_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, default=_utcnow)
 
     __table_args__ = (
         Index("ix_impressions_user_shown", "user_id", "shown_at"),

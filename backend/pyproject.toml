@@ -68,6 +68,9 @@ ignore = [
 # The ML modules intentionally mirror Andrew Ng's notation (X, W, b, Y, R, mu).
 "ml/*.py" = ["N802", "N803", "N806"]
 "tests/*.py" = ["ARG001", "N803", "N806"]
+# TypeDecorator.process_bind_param/process_result_value take `dialect`
+# whether or not an implementation uses it; the signature is not ours.
+"app/db/models.py" = ["ARG002"]
 
 [tool.mypy]
 python_version = "3.11"

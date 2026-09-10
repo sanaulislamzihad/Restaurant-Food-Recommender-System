@@ -5,14 +5,14 @@ These run against SQLite, which honours CHECK constraints and (because
 declarations, so a rule that holds here holds there.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import FoodItem, ItemNeighbor, Rating, Restaurant, User
+from app.db.models import FoodItem, Impression, ItemNeighbor, Rating, Restaurant, User
 
 
 def _restaurant(session: Session) -> Restaurant:
@@ -121,8 +121,44 @@ def test_foreign_keys_are_enforced(db_session: Session) -> None:
         db_session.flush()
 
 
-def test_timestamps_are_timezone_aware(db_session: Session) -> None:
+def test_timestamps_are_timezone_aware_after_a_real_round_trip(db_session: Session) -> None:
+    """Read the value back out of the database rather than off the in-memory
+    object.
+
+    The earlier version of this test asserted on the attribute straight after
+    commit, which (with expire_on_commit=False) is still the Python value that
+    went in - so it passed while SQLite was quietly returning naive datetimes
+    and the API was serialising timestamps with no offset at all.
+    """
     user = _user(db_session, email="tz@example.com")
     db_session.commit()
-    assert user.created_at.tzinfo is not None
-    assert user.created_at <= datetime.now(UTC)
+    db_session.expire_all()
+
+    reloaded = db_session.get(User, user.id)
+    assert reloaded is not None
+    assert reloaded.created_at.tzinfo is not None
+    assert reloaded.created_at.utcoffset() == timedelta(0)
+    assert reloaded.created_at <= datetime.now(UTC)
+
+
+def test_a_naive_timestamp_is_stored_as_utc(db_session: Session) -> None:
+    """Client-supplied timestamps may arrive without an offset; they are assumed
+    to be UTC rather than rejected, because the impressions endpoint is
+    fire-and-forget telemetry."""
+    restaurant = _restaurant(db_session)
+    item = _item(db_session, restaurant)
+    user = _user(db_session, email="naive@example.com")
+
+    db_session.add(
+        Impression(
+            user_id=user.id,
+            food_item_id=item.id,
+            was_ordered=True,
+            shown_at=datetime(2026, 3, 1, 12, 0, 0),  # noqa: DTZ001 - deliberately naive
+        )
+    )
+    db_session.commit()
+    db_session.expire_all()
+
+    stored = db_session.query(Impression).one()
+    assert stored.shown_at == datetime(2026, 3, 1, 12, 0, 0, tzinfo=UTC)
