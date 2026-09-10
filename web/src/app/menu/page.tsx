@@ -260,12 +260,13 @@ function MenuContent() {
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <Label htmlFor="min_price">Min ৳</Label>
+                <Label htmlFor="min_price">Min price</Label>
                 <Input
                   id="min_price"
                   className="mt-1"
                   type="number"
                   min={0}
+                  placeholder="৳"
                   value={filters.min_price ?? ""}
                   onChange={(event) =>
                     update({ min_price: event.target.value || null })
@@ -273,12 +274,13 @@ function MenuContent() {
                 />
               </div>
               <div>
-                <Label htmlFor="max_price">Max ৳</Label>
+                <Label htmlFor="max_price">Max price</Label>
                 <Input
                   id="max_price"
                   className="mt-1"
                   type="number"
                   min={0}
+                  placeholder="৳"
                   value={filters.max_price ?? ""}
                   onChange={(event) =>
                     update({ max_price: event.target.value || null })

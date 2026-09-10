@@ -20,7 +20,7 @@ Built milestone by milestone. Current progress:
 - [x] **M2** — collaborative filtering training pipeline
 - [x] **M3** — evaluation harness and baseline comparison
 - [x] **M4** — FastAPI backend
-- [ ] **M5** — Next.js frontend
+- [x] **M5** — Next.js frontend
 - [ ] **M6** — two-tower content model, hybrid scoring, retrieval + ranking
 - [ ] **M7** — docs, admin dashboard, CI
 
@@ -92,6 +92,20 @@ bottom of a 1–5 scale, ranking the entire menu identically badly. Training on
 mean-centred data and adding `mu[i]` back means that user instead sees each
 dish's average rating. Verified against a trained model: the cold user's
 predictions match the item means to 3.4e-10.
+
+## Running the app
+
+```bash
+# terminal 1 - API
+cd backend && uvicorn app.main:app --reload
+
+# terminal 2 - web
+cd web && npm install && npm run dev
+```
+
+Then open http://localhost:3000. Sign in as any seeded address (they all use
+the password `foodrec123`) to see a personalised feed, or register a fresh
+account to see the cold-start path.
 
 ## API
 

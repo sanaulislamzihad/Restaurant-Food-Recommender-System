@@ -81,6 +81,35 @@
   }
 }
 
+@layer components {
+  /*
+   * Dish tile background.
+   *
+   * The hue comes from an inline `--dish-h` so each dish can sit at its own
+   * point inside its cuisine's hue range. Keying the gradient to the cuisine
+   * alone made a filtered menu - or a user with a narrow taste - into a wall of
+   * one colour, since adjacent cards were then pixel-identical.
+   *
+   * Lightness is chosen per theme here rather than inline, so the caller only
+   * ever supplies a hue.
+   */
+  .dish-tile {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--dish-h) 80% 64%),
+      hsl(calc(var(--dish-h) + 16) 84% 48%)
+    );
+  }
+
+  .dark .dish-tile {
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--dish-h) 52% 32%),
+      hsl(calc(var(--dish-h) + 16) 58% 22%)
+    );
+  }
+}
+
 @layer utilities {
   /* Horizontal carousels: scrollable, but without a scrollbar interrupting the
      row of cards. Keyboard and trackpad scrolling still work. */

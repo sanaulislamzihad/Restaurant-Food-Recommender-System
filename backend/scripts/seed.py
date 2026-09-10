@@ -331,7 +331,13 @@ def _build_food_items(rng: np.random.Generator, now: datetime) -> list[dict[str,
                     "is_rice_based": dish.is_rice_based,
                     "price": Decimal(str(price)),
                     "prep_time_min": dish.prep_time_min,
-                    "image_url": f"/images/food/{_slug(dish.name)}.jpg",
+                    # No image assets ship with the repo, and inventing a path
+                    # to a file that does not exist is data claiming something
+                    # untrue: the browser fetches every one, gets a 404, and the
+                    # console fills with errors that mask real ones. NULL lets
+                    # the frontend render its designed placeholder immediately.
+                    # A real deployment populates this from object storage.
+                    "image_url": None,
                     "ingredient_tags": list(dish.ingredient_tags),
                     "is_available": True,
                     # Overwritten below for the designated new arrivals.
@@ -359,10 +365,6 @@ def _describe(dish: DishSpec) -> str:
     diet = "Vegetarian" if dish.is_veg else "Non-vegetarian"
     tags = ", ".join(dish.ingredient_tags)
     return f"{diet}, {heat}. Made with {tags}. Ready in about {dish.prep_time_min} minutes."
-
-
-def _slug(name: str) -> str:
-    return "".join(ch.lower() if ch.isalnum() else "-" for ch in name).strip("-")
 
 
 def _build_users(

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { cuisineStyle, dishGlyph } from "@/lib/cuisine";
+import { dishGlyph, dishHue } from "@/lib/cuisine";
 import { cn } from "@/lib/utils";
 
 /**
@@ -28,16 +28,16 @@ export function DishImage({
   glyphClassName?: string;
 }) {
   const [failed, setFailed] = React.useState(false);
-  const style = cuisineStyle(cuisine);
   const showPhoto = Boolean(imageUrl) && !failed;
 
   return (
     <div
       className={cn(
-        "relative flex items-center justify-center overflow-hidden bg-gradient-to-br",
-        style.gradient,
+        "dish-tile relative flex items-center justify-center overflow-hidden",
         className,
       )}
+      // Only the hue is set here; `.dish-tile` picks lightness per theme.
+      style={{ "--dish-h": dishHue(name, cuisine) } as React.CSSProperties}
     >
       {showPhoto ? (
         /* next/image would need every possible image host declared in

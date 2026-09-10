@@ -591,3 +591,29 @@ def test_retrain_reports_the_command_instead_of_training_in_process(client: Test
     assert "python -m ml.train_cf" in body["command"]
     assert "--lambda 2.0" in body["command"]
     assert "build_neighbors" in body["command"]
+
+
+# ---------------------------------------------------------------------------
+# CORS
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "origin", ["http://localhost:3000", "http://127.0.0.1:3000"]
+)
+def test_both_development_origins_are_allowed(client: TestClient, origin: str) -> None:
+    """A browser treats localhost and 127.0.0.1 as different origins.
+
+    Allowing only one produced an app that rendered its shell perfectly and then
+    fetched nothing at all, with the cause visible only in the browser console.
+    Found by driving the real UI, not by any request-level test.
+    """
+    response = client.options(
+        "/api/menu",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == origin

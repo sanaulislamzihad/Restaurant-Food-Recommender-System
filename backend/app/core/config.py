@@ -50,7 +50,10 @@ class Settings(BaseSettings):
     # ---- App ------------------------------------------------------------
     environment: Literal["development", "test", "production"] = "development"
     log_level: str = "INFO"
-    cors_origins: str = "http://localhost:3000"
+    # localhost and 127.0.0.1 are distinct origins to a browser, and a dev who
+    # opens the wrong one gets an app with no data and no obvious cause.
+    # Production overrides this with the real domain.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     @property
     def model_root(self) -> Path:
