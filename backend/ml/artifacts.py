@@ -115,6 +115,19 @@ def latest_version_for_mode(root: Path, mode: str) -> str | None:
     return None
 
 
+def latest_version_with(root: Path, filename: str) -> str | None:
+    """Newest version directory containing a given artifact file.
+
+    The collaborative and content models are trained by separate jobs and land
+    in separate version directories. Serving looks each half up independently,
+    so training one does not invalidate the other and either can be absent.
+    """
+    for version in reversed(list_versions(root)):
+        if (root / version / filename).exists():
+            return version
+    return None
+
+
 def next_version_dir(root: Path) -> Path:
     """Allocate the next unused ``models/v{n}`` directory."""
     existing = list_versions(root)
