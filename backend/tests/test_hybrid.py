@@ -272,7 +272,7 @@ def test_retrieval_never_returns_nothing_for_a_brand_new_user(
 
     result = retrieve_candidates(db_session, stranger.id)
     assert len(result) > 0
-    assert result.source_counts["similar_to_ordered"] == 0
+    assert result.source_counts["similar_to_liked"] == 0
     assert result.source_counts["popular"] > 0
 
 
@@ -294,7 +294,9 @@ def test_retrieval_explains_neighbours_by_the_dish_that_was_ordered(
     by_id = {c.item.id: c for c in result.candidates}
     neighbour = by_id[items[1].id]  # type: ignore[index]
     assert neighbour.source is RecommendationSource.SIMILAR_TO_ORDERED
-    assert neighbour.reason == "Because you liked Dish 0"
+    # Dish 0 was ordered, not rated, so the reason says so rather than claiming
+    # the customer liked something they never reviewed.
+    assert neighbour.reason == "Because you ordered Dish 0"
 
 
 def test_ranking_suppresses_something_ordered_in_the_last_day(
@@ -521,3 +523,75 @@ def test_an_on_demand_score_stays_on_the_rating_scale() -> None:
     model = _fake_content_model()
     user = {"id": 1, "age": 30, "gender": "male", "area": "Dhanmondi", "spice_tolerance": 3}
     assert 1.0 <= model.score_new_item(user, NEW_DISH) <= 5.0
+
+
+def test_a_user_who_only_rates_still_gets_personalised_candidates(
+    catalogue: dict[str, object], db_session: Session
+) -> None:
+    """Rating a dish must drive recommendations, not just ordering one.
+
+    Retrieval originally seeded only from the order history, following the
+    brief's wording literally. A customer who rated five dishes but had never
+    placed an order therefore got no personalised candidates at all - the feed
+    fell back to the popularity floor and ignored every rating they had given,
+    which is the opposite of what a rating is for.
+    """
+    from app.db.models import Rating
+
+    items = catalogue["items"]
+    rater = User(name="Rates Only", email="rates@example.com", password_hash="x", spice_tolerance=3)
+    db_session.add(rater)
+    db_session.flush()
+
+    # Five stars for dish 0, and no orders whatsoever.
+    db_session.add(
+        Rating(user_id=rater.id, food_item_id=items[0].id, rating=Decimal("5"))  # type: ignore[index]
+    )
+    db_session.commit()
+
+    result = retrieve_candidates(db_session, rater.id)
+
+    assert (
+        result.source_counts["similar_to_liked"] > 0
+    ), "a five-star rating produced no personalised candidates"
+    by_id = {c.item.id: c for c in result.candidates}
+    neighbour = by_id[items[1].id]  # type: ignore[index]
+    assert neighbour.reason == "Because you liked Dish 0"
+
+
+def test_a_dish_the_user_already_rated_is_never_recommended_again(
+    catalogue: dict[str, object], db_session: Session
+) -> None:
+    """Matched on name, because the same dish is sold by several restaurants as
+    separate rows - an id-only check recommends Tandoori Roti to somebody who
+    has just rated Tandoori Roti."""
+    from app.db.models import Rating
+
+    restaurant = db_session.query(Restaurant).first()
+    assert restaurant is not None
+    twin = FoodItem(
+        restaurant_id=restaurant.id,
+        name="Dish 0",  # same name, different row
+        cuisine="bengali",
+        spice_level=2,
+        price=Decimal("210.00"),
+        ingredient_tags=[],
+        is_available=True,
+    )
+    db_session.add(twin)
+    db_session.flush()
+
+    items = catalogue["items"]
+    rater = User(name="R", email="r@example.com", password_hash="x", spice_tolerance=3)
+    db_session.add(rater)
+    db_session.flush()
+    db_session.add(
+        Rating(user_id=rater.id, food_item_id=items[0].id, rating=Decimal("5"))  # type: ignore[index]
+    )
+    db_session.commit()
+
+    result = retrieve_candidates(db_session, rater.id)
+    names = [c.item.name for c in result.candidates]
+
+    assert "Dish 0" not in names, "recommended a dish the user had already rated"
+    assert len(names) == len(set(names)), f"the same dish appears twice: {names}"

@@ -7,10 +7,18 @@ stage should only ever see a shortlist.
 
 Three sources, in descending order of how personal they are:
 
-1. **Neighbours of what the user recently ordered.** The strongest signal, and
-   the only one that yields a specific reason - "because you liked Kacchi
-   Biryani" names a real dish the customer really ordered.
-2. **Popular dishes in the cuisines they order most.** Broader, still personal.
+1. **Neighbours of dishes the user has shown they like.** The strongest signal,
+   and the only one that yields a specific reason - "because you liked Kacchi
+   Biryani" names a real dish.
+
+   Both ratings and orders count, and a rating comes first: rating a dish four
+   or five stars is an explicit statement of preference, whereas an order only
+   says somebody tried it once and may well have been disappointed. Drawing
+   from orders alone - which is what a literal reading of the brief gives -
+   means a customer who rates a dish but has never ordered anything gets no
+   personalised candidates at all.
+2. **Popular dishes in the cuisines they favour**, judged by ratings and orders
+   together for the same reason. Broader, still personal.
 3. **Popular overall.** The floor. This is what guarantees a brand-new customer
    never receives an empty feed, which is the whole cold-start requirement.
 
@@ -31,8 +39,10 @@ from app.core.config import get_settings
 from app.db.models import FoodItem, ItemNeighbor, Order, OrderItem, Rating
 from app.schemas.recommendation import RecommendationSource
 
-#: How many recent orders to draw neighbours from.
+#: How many of the user's liked dishes to draw neighbours from.
 RECENT_ITEM_LIMIT = 10
+#: A rating at or above this counts as "they liked it".
+LIKED_THRESHOLD = 4.0
 #: Neighbours pulled per recent item.
 NEIGHBOURS_PER_ITEM = 10
 #: Cuisines considered "the user's", and how many dishes to take from each.
@@ -64,40 +74,80 @@ class CandidateSet:
         return len(self.candidates)
 
 
-def _recent_ordered_items(db: Session, user_id: int, limit: int) -> list[FoodItem]:
-    """The user's most recently ordered dishes, newest first, de-duplicated."""
-    rows = db.execute(
-        select(FoodItem, Order.created_at)
-        .join(OrderItem, OrderItem.food_item_id == FoodItem.id)
-        .join(Order, Order.id == OrderItem.order_id)
-        .where(Order.user_id == user_id)
-        .order_by(Order.created_at.desc())
-        .limit(limit * 4)  # over-fetch: the same dish is often ordered repeatedly
-    ).all()
+def _seed_items(db: Session, user_id: int, limit: int) -> list[tuple[FoodItem, str]]:
+    """Dishes to draw neighbours from, each with the verb that explains it.
+
+    Highly-rated dishes are taken first, then recently ordered ones. A four- or
+    five-star rating is the customer saying outright that they liked something;
+    an order only says they tried it.
+
+    Returns ``(item, verb)`` pairs where the verb is "liked" or "ordered", so
+    the reason shown to the customer describes what actually happened rather
+    than assuming.
+    """
+    rated = (
+        db.execute(
+            select(FoodItem)
+            .join(Rating, Rating.food_item_id == FoodItem.id)
+            .where(Rating.user_id == user_id, Rating.rating >= LIKED_THRESHOLD)
+            .order_by(Rating.created_at.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
+
+    ordered = (
+        db.execute(
+            select(FoodItem)
+            .join(OrderItem, OrderItem.food_item_id == FoodItem.id)
+            .join(Order, Order.id == OrderItem.order_id)
+            .where(Order.user_id == user_id)
+            .order_by(Order.created_at.desc())
+            .limit(limit * 4)  # over-fetch: the same dish is often ordered repeatedly
+        )
+        .scalars()
+        .all()
+    )
 
     seen: set[int] = set()
-    items: list[FoodItem] = []
-    for item, _ in rows:
+    seeds: list[tuple[FoodItem, str]] = []
+    for item, verb in [(i, "liked") for i in rated] + [(i, "ordered") for i in ordered]:
         if item.id in seen:
             continue
         seen.add(item.id)
-        items.append(item)
-        if len(items) == limit:
+        seeds.append((item, verb))
+        if len(seeds) == limit:
             break
-    return items
+    return seeds
 
 
 def _top_cuisines(db: Session, user_id: int, limit: int) -> list[str]:
-    rows = db.execute(
+    """The user's favourite cuisines, from ratings and orders combined.
+
+    Counting orders alone leaves a customer who only rates with no favourite
+    cuisine at all, and therefore no candidates from this source.
+    """
+    tally: dict[str, int] = {}
+
+    for cuisine, count in db.execute(
+        select(FoodItem.cuisine, func.count())
+        .join(Rating, Rating.food_item_id == FoodItem.id)
+        .where(Rating.user_id == user_id, Rating.rating >= LIKED_THRESHOLD)
+        .group_by(FoodItem.cuisine)
+    ).all():
+        tally[str(cuisine)] = tally.get(str(cuisine), 0) + int(count)
+
+    for cuisine, count in db.execute(
         select(FoodItem.cuisine, func.count())
         .join(OrderItem, OrderItem.food_item_id == FoodItem.id)
         .join(Order, Order.id == OrderItem.order_id)
         .where(Order.user_id == user_id)
         .group_by(FoodItem.cuisine)
-        .order_by(func.count().desc())
-        .limit(limit)
-    ).all()
-    return [str(row[0]) for row in rows]
+    ).all():
+        tally[str(cuisine)] = tally.get(str(cuisine), 0) + int(count)
+
+    return [name for name, _ in sorted(tally.items(), key=lambda kv: -kv[1])[:limit]]
 
 
 def _by_ids_preserving_order(db: Session, ids: list[int]) -> list[FoodItem]:
@@ -187,23 +237,39 @@ def retrieve_candidates(db: Session, user_id: int) -> CandidateSet:
     # showing it wastes a slot in a short list on something they have decided
     # about. Excluded here rather than after ranking so a rated dish never
     # displaces a candidate that could have been shown.
+    #
+    # Matched on *name*, not id. The same dish is sold by several restaurants as
+    # separate rows, so an id-only check happily recommends "Tandoori Roti" to
+    # somebody who has just rated Tandoori Roti - correct by the data model and
+    # plainly wrong to the customer reading it.
     already_rated = {
-        int(row[0])
-        for row in db.execute(select(Rating.food_item_id).where(Rating.user_id == user_id)).all()
+        str(row[0]).casefold()
+        for row in db.execute(
+            select(FoodItem.name)
+            .join(Rating, Rating.food_item_id == FoodItem.id)
+            .where(Rating.user_id == user_id)
+        ).all()
     }
+    #: Names already shortlisted, so the same dish from two restaurants does not
+    #: take two slots in one feed.
+    chosen_names: set[str] = set()
 
     def add(item: FoodItem, source: RecommendationSource, reason: str) -> bool:
-        if not item.is_available or item.id in chosen or item.id in already_rated:
+        name = item.name.casefold()
+        if not item.is_available or item.id in chosen:
             return False
+        if name in already_rated or name in chosen_names:
+            return False
+        chosen_names.add(name)
         chosen[item.id] = Candidate(item=item, source=source, reason=reason)
         return True
 
-    # ---- 1. Neighbours of recent orders ---------------------------------
-    recent = _recent_ordered_items(db, user_id, RECENT_ITEM_LIMIT)
+    # ---- 1. Neighbours of dishes they liked or ordered -------------------
+    recent = _seed_items(db, user_id, RECENT_ITEM_LIMIT)
     added = 0
     if recent:
-        recent_ids = [item.id for item in recent]
-        names = {item.id: item.name for item in recent}
+        recent_ids = [item.id for item, _ in recent]
+        names = {item.id: (item.name, verb) for item, verb in recent}
         rows = db.execute(
             select(ItemNeighbor.food_item_id, FoodItem)
             .join(FoodItem, FoodItem.id == ItemNeighbor.neighbor_id)
@@ -219,14 +285,15 @@ def retrieve_candidates(db: Session, user_id: int) -> CandidateSet:
         for source_id, neighbour in rows:
             by_source.setdefault(int(source_id), []).append(neighbour)
         for source_id in recent_ids:
+            name, verb = names[source_id]
             for neighbour in by_source.get(source_id, []):
                 if add(
                     neighbour,
                     RecommendationSource.SIMILAR_TO_ORDERED,
-                    f"Because you liked {names[source_id]}",
+                    f"Because you {verb} {name}",
                 ):
                     added += 1
-    result.source_counts["similar_to_ordered"] = added
+    result.source_counts["similar_to_liked"] = added
 
     # ---- 2. Their most-ordered cuisines ---------------------------------
     added = 0
@@ -236,7 +303,10 @@ def retrieve_candidates(db: Session, user_id: int) -> CandidateSet:
             if add(
                 item,
                 RecommendationSource.FAVOURITE_CUISINE,
-                f"You order a lot of {label}",
+                # Neutral wording on purpose: the cuisine may come from ratings,
+                # from orders, or both, and "you order a lot of this" is simply
+                # false for a customer who has only ever rated.
+                f"More {label} - one of your favourites",
             ):
                 added += 1
     result.source_counts["favourite_cuisine"] = added
