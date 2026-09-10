@@ -22,7 +22,48 @@ Built milestone by milestone. Current progress:
 - [x] **M4** — FastAPI backend
 - [x] **M5** — Next.js frontend
 - [x] **M6** — two-tower content model, hybrid scoring, retrieval + ranking
-- [ ] **M7** — docs, admin dashboard, CI
+- [x] **M7** — docs, admin dashboard, CI
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph offline["Offline jobs — never in a request"]
+        seed[("seed<br/>302 dishes · 500 users<br/>15k ratings")]
+        cf["ml.train_cf<br/>collaborative filtering<br/>X · W · b"]
+        ct["ml.train_content<br/>two-tower<br/>256→128→32"]
+        nb["ml.build_neighbors<br/>similar items"]
+        ev["ml.evaluate<br/>held-out vs baselines"]
+        seed --> cf --> nb
+        seed --> ct
+        cf --> ev
+        ct --> ev
+    end
+
+    subgraph artifacts["models/v{n}/"]
+        art["npz weights · id maps<br/>item embeddings · model card"]
+    end
+
+    cf --> art
+    ct --> art
+    nb --> db
+
+    subgraph serving["FastAPI — no TensorFlow"]
+        retr["retrieval<br/>~150 candidates"]
+        rank["ranking<br/>α·collab + (1−α)·content<br/>+ business rules"]
+        retr --> rank
+    end
+
+    art -.loaded once.-> rank
+    db[("Postgres / SQLite")] --> retr
+    rank --> cache[("Redis / in-process")]
+    cache --> web["Next.js 14"]
+    web -->|impressions| db
+```
+
+Training is always an offline job. The API loads saved numpy arrays and runs
+dot products and three matrix multiplies, so the serving image has no
+TensorFlow in it at all.
 
 ## Stack
 
