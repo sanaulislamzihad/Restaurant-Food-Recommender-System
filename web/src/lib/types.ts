@@ -80,9 +80,16 @@ export interface RecommendedItem {
 
 export interface RecommendationResponse {
   items: RecommendedItem[];
+  /** Labels both halves, e.g. "v1+v4"; null when the response is a fallback. */
   model_version: string | null;
   is_cold_start: boolean;
   candidates_considered: number;
+  /** Pipeline diagnostics. Useful for the admin view and for debugging a feed. */
+  retrieval_ms: number;
+  ranking_ms: number;
+  retrieval_sources: Record<string, number>;
+  scoring_breakdown: Record<string, number>;
+  dropped_recently_ordered: number;
   latency_ms: number;
   cached: boolean;
 }
