@@ -19,7 +19,7 @@ Built milestone by milestone. Current progress:
 - [x] **M1** — schema, migrations, clustered seed data
 - [x] **M2** — collaborative filtering training pipeline
 - [x] **M3** — evaluation harness and baseline comparison
-- [ ] **M4** — FastAPI backend
+- [x] **M4** — FastAPI backend
 - [ ] **M5** — Next.js frontend
 - [ ] **M6** — two-tower content model, hybrid scoring, retrieval + ranking
 - [ ] **M7** — docs, admin dashboard, CI
@@ -92,6 +92,41 @@ bottom of a 1–5 scale, ranking the entire menu identically badly. Training on
 mean-centred data and adding `mu[i]` back means that user instead sees each
 dish's average rating. Verified against a trained model: the cold user's
 predictions match the item means to 3.4e-10.
+
+## API
+
+20 endpoints under `/api`, with interactive docs at `/docs` once the server is
+running:
+
+```bash
+cd backend
+uvicorn app.main:app --reload
+```
+
+| | |
+| --- | --- |
+| auth | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `GET /auth/me/taste-profile` |
+| menu | `GET /menu` (filter, sort, paginate), `GET /menu/{id}`, `GET /menu/cuisines` |
+| interactions | `POST /ratings`, `GET /ratings/me`, `POST /orders`, `GET /orders/history`, `GET /orders/{id}`, `POST /impressions/batch` |
+| recommendations | `GET /recommendations/for-me`, `GET /recommendations/similar/{id}`, `GET /recommendations/popular` |
+| admin | `GET /admin/model/metrics`, `POST /admin/model/retrain` |
+
+Every recommended item carries a `reason` derived from what actually surfaced
+it — "Because you liked Mutton Kacchi Biryani", not a generic string. A user
+with too little history falls back to popularity with `is_cold_start: true` and
+`model_version: null`, so the frontend can label that row honestly rather than
+calling a popularity list "picked for you".
+
+Recommendations are cached with the model version in the key, so retraining
+invalidates them implicitly. Measured 30.7 ms uncached against 0.6 ms cached.
+Redis is used when `REDIS_URL` is set and an in-process TTL cache when it is
+not, so the API runs with no external services at all.
+
+After training, rebuild the "similar items" index:
+
+```bash
+python -m ml.build_neighbors
+```
 
 ## Results
 
