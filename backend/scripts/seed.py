@@ -65,6 +65,7 @@ from scripts.menu_data import (
 # ---------------------------------------------------------------------------
 
 SEED_PASSWORD = "foodrec123"
+ADMIN_EMAIL = "admin@bhoj.example.com"
 
 #: History window. Ratings and orders are spread across this many days so the
 #: evaluation harness has a meaningful chronological axis to split on.
@@ -418,9 +419,31 @@ def _build_users(
                 "area": DHAKA_AREAS[int(rng.integers(len(DHAKA_AREAS)))],
                 "spice_tolerance": int(rng.integers(low, high + 1)),
                 "created_at": now - timedelta(days=joined_days_ago),
+                "is_admin": False,
             }
         )
     return rows, clusters
+
+
+def _admin_user(user_id: int, now: datetime) -> dict[str, Any]:
+    """A staff account for the admin dashboard.
+
+    Appended after the customers and after the ratings are generated, so it
+    consumes no randomness and leaves the rating data - and every published
+    metric - bit-identical.
+    """
+    return {
+        "id": user_id,
+        "name": "Bhoj Admin",
+        "email": ADMIN_EMAIL,
+        "password_hash": bcrypt.hashpw(SEED_PASSWORD.encode(), bcrypt.gensalt()).decode(),
+        "age": None,
+        "gender": None,
+        "area": None,
+        "spice_tolerance": 2,
+        "created_at": now - timedelta(days=HISTORY_DAYS),
+        "is_admin": True,
+    }
 
 
 def _build_ratings(
@@ -686,6 +709,7 @@ def seed(cfg: SeedConfig) -> dict[str, Any]:
         items = _build_food_items(rng, now)
         users, clusters = _build_users(rng, cfg, now)
         ratings = _build_ratings(rng, cfg, users, clusters, items, now)
+        users.append(_admin_user(len(users) + 1, now))
         items_by_id = {item["id"]: item for item in items}
         orders, order_items = _build_orders(rng, ratings, items_by_id, now)
         impressions = _build_impressions(rng, cfg, orders, order_items, items)
@@ -708,20 +732,27 @@ def seed(cfg: SeedConfig) -> dict[str, Any]:
             "restaurants": len(restaurants),
             "food_items": len(items),
             "users": len(users),
+            "customers": len(clusters),
             "ratings": len(ratings),
             "orders": len(orders),
             "order_items": len(order_items),
             "impressions": len(impressions),
         },
         "matrix": {
-            "density": round(len(ratings) / (len(users) * len(items)), 4),
+            # Over customers, not staff: the admin row has no ratings and
+            # counting it would understate how dense the matrix actually is.
+            "density": round(len(ratings) / (len(clusters) * len(items)), 4),
             "items_with_zero_ratings": len(items) - len(rated_item_ids),
         },
         "clusters": {name: clusters.count(name) for name in TASTE_CLUSTERS},
         # Consumed by verify_clusters.py. Deliberately a sidecar file rather than
         # a database column: the label is generator ground truth, not product data.
+        # `users` carries the appended staff account, which has no taste
+        # cluster; zip over the customers only. strict=True caught this the
+        # moment the admin row was added, which is why it is there.
         "user_clusters": {
-            str(user["id"]): cluster for user, cluster in zip(users, clusters, strict=True)
+            str(user["id"]): cluster
+            for user, cluster in zip(users[: len(clusters)], clusters, strict=True)
         },
     }
 

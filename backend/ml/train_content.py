@@ -78,7 +78,9 @@ def load_catalogue(session: Session) -> tuple[list[dict[str, Any]], list[dict[st
             "area": row.area,
             "spice_tolerance": row.spice_tolerance,
         }
-        for row in session.execute(select(User).order_by(User.id)).scalars()
+        for row in session.execute(
+            select(User).where(User.is_admin.is_(False)).order_by(User.id)
+        ).scalars()
     ]
     return items, users
 

@@ -120,6 +120,10 @@ class User(Base):
     area: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     # 0 = cannot handle any heat, 5 = wants it as hot as the kitchen can make it.
     spice_tolerance: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    # Admin endpoints were previously behind the ordinary user token, which meant
+    # any registered customer could read the model card and trigger a retrain.
+    # There was nothing to check against; now there is.
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, default=_utcnow)
 
     ratings: Mapped[list["Rating"]] = relationship(

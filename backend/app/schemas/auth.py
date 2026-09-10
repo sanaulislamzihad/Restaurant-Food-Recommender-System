@@ -40,6 +40,7 @@ class UserResponse(ORMModel):
     gender: Gender | None
     area: str | None
     spice_tolerance: int
+    is_admin: bool
     created_at: datetime
 
 

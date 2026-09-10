@@ -75,6 +75,16 @@ def client() -> Iterator[TestClient]:
             db.flush()
             items.append(item)
 
+        db.add(
+            User(
+                name="Admin",
+                email="admin@example.com",
+                password_hash=PASSWORD_HASH,
+                spice_tolerance=2,
+                is_admin=True,
+            )
+        )
+
         users = {}
         for email, count in (("warm", 5), ("cold", 1), ("other", 0)):
             user = User(
@@ -566,15 +576,29 @@ def test_admin_metrics_requires_authentication(client: TestClient) -> None:
     assert client.get("/api/admin/model/metrics").status_code in (401, 403)
 
 
+def test_admin_endpoints_reject_an_ordinary_customer(client: TestClient) -> None:
+    """403 rather than 404: the admin area is not a secret, and telling a
+    signed-in customer the page is not for them beats pretending it is missing."""
+    headers = _token(client, "warm@example.com")
+
+    for path in ("/api/admin/model/metrics", "/api/admin/coverage"):
+        assert client.get(path, headers=headers).status_code == 403, path
+
+    for path in ("/api/admin/model/retrain", "/api/admin/menu"):
+        assert client.post(path, json={}, headers=headers).status_code == 403, path
+
+
 def test_admin_metrics_reports_no_model_before_training(client: TestClient) -> None:
-    body = client.get("/api/admin/model/metrics", headers=_token(client, "warm@example.com")).json()
+    body = client.get(
+        "/api/admin/model/metrics", headers=_token(client, "admin@example.com")
+    ).json()
     assert body["loaded"] is None
     assert body["available_versions"] == []
 
 
 def test_admin_metrics_reports_the_loaded_model(trained_model: TestClient) -> None:
     body = trained_model.get(
-        "/api/admin/model/metrics", headers=_token(trained_model, "warm@example.com")
+        "/api/admin/model/metrics", headers=_token(trained_model, "admin@example.com")
     ).json()
     assert body["loaded"]["version"] == "v1"
     assert body["available_versions"] == ["v1"]
@@ -586,7 +610,7 @@ def test_retrain_reports_the_command_instead_of_training_in_process(client: Test
     response = client.post(
         "/api/admin/model/retrain",
         json={"mode": "explicit", "iterations": 200, "lambda": 2.0},
-        headers=_token(client, "warm@example.com"),
+        headers=_token(client, "admin@example.com"),
     )
     assert response.status_code == 202
     body = response.json()
@@ -617,3 +641,92 @@ def test_both_development_origins_are_allowed(client: TestClient, origin: str) -
     )
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") == origin
+
+
+# ---------------------------------------------------------------------------
+# Admin menu management
+# ---------------------------------------------------------------------------
+
+
+def _admin(client: TestClient) -> dict[str, str]:
+    return _token(client, "admin@example.com")
+
+
+def test_an_admin_can_add_a_dish(client: TestClient) -> None:
+    response = client.post(
+        "/api/admin/menu",
+        json={
+            "restaurant_id": 1,
+            "name": "Test Special",
+            "cuisine": "bengali",
+            "price": "275.00",
+            "spice_level": 3,
+        },
+        headers=_admin(client),
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["name"] == "Test Special"
+    assert body["rating_count"] == 0
+
+    # It must be visible on the public menu immediately.
+    names = {i["name"] for i in client.get("/api/menu?search=Test Special").json()["items"]}
+    assert "Test Special" in names
+
+
+def test_creating_a_dish_for_an_unknown_restaurant_404s(client: TestClient) -> None:
+    response = client.post(
+        "/api/admin/menu",
+        json={"restaurant_id": 999999, "name": "X", "cuisine": "bengali", "price": "10.00"},
+        headers=_admin(client),
+    )
+    assert response.status_code == 404
+
+
+def test_a_patch_leaves_omitted_fields_alone(client: TestClient) -> None:
+    """The bug this guards: model_dump() without exclude_unset overwrites every
+    omitted field with its schema default."""
+    item = client.get("/api/menu?search=Rasmalai").json()["items"][0]
+    before = client.get(f"/api/menu/{item['id']}").json()
+
+    response = client.patch(
+        f"/api/admin/menu/{item['id']}", json={"price": "125.00"}, headers=_admin(client)
+    )
+    assert response.status_code == 200
+    after = response.json()
+
+    assert float(after["price"]) == pytest.approx(125.0)
+    assert after["name"] == before["name"]
+    assert after["cuisine"] == before["cuisine"]
+    assert after["spice_level"] == before["spice_level"]
+    assert after["is_veg"] == before["is_veg"]
+
+
+def test_retiring_a_dish_hides_it_without_destroying_order_history(
+    client: TestClient,
+) -> None:
+    item = client.get("/api/menu?search=Rasmalai").json()["items"][0]
+    client.post(
+        "/api/orders",
+        json={"items": [{"food_item_id": item["id"], "quantity": 1}]},
+        headers=_token(client, "other@example.com"),
+    )
+
+    response = client.delete(f"/api/admin/menu/{item['id']}", headers=_admin(client))
+    assert response.status_code == 200
+
+    # Gone from the menu ...
+    names = {i["name"] for i in client.get("/api/menu").json()["items"]}
+    assert item["name"] not in names
+    # ... but the row still exists, so past orders still resolve.
+    assert client.get(f"/api/menu/{item['id']}").json()["is_available"] is False
+    history = client.get("/api/orders/history", headers=_token(client, "other@example.com"))
+    assert history.json()["total"] == 1
+
+
+def test_coverage_reports_the_catalogue_breakdown(client: TestClient) -> None:
+    body = client.get("/api/admin/coverage", headers=_admin(client)).json()
+    assert body["total_items"] == 9
+    assert body["available_items"] == 8
+    assert sum(row["total_items"] for row in body["by_cuisine"]) == body["total_items"]
+    assert body["min_item_ratings"] >= 1

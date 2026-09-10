@@ -70,3 +70,24 @@ def get_optional_user(credentials: Credentials, db: DbSession) -> User | None:
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 OptionalUser = Annotated[User | None, Depends(get_optional_user)]
+
+
+def get_current_admin(user: CurrentUser) -> User:
+    """The authenticated user, if they are staff.
+
+    403 rather than 404 here, unlike the order endpoints: the existence of an
+    admin area is not a secret, and telling a signed-in customer that the page
+    is not for them is more useful than pretending it does not exist.
+
+    Defined after CurrentUser so the annotation is a real reference rather than
+    a forward one FastAPI has to resolve later.
+    """
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint requires an administrator account.",
+        )
+    return user
+
+
+CurrentAdmin = Annotated[User, Depends(get_current_admin)]

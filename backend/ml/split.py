@@ -66,7 +66,13 @@ class Split:
 def load_rating_events(session: Session) -> tuple[list[RatingEvent], list[int], list[int]]:
     """Load every rating as a timestamped event, plus the item and user axes."""
     item_ids = [row[0] for row in session.execute(select(FoodItem.id).order_by(FoodItem.id)).all()]
-    user_ids = [row[0] for row in session.execute(select(User.id).order_by(User.id)).all()]
+    # Staff accounts are not customers; see the note in ml/data.py.
+    user_ids = [
+        row[0]
+        for row in session.execute(
+            select(User.id).where(User.is_admin.is_(False)).order_by(User.id)
+        ).all()
+    ]
 
     rows = session.execute(
         select(Rating.user_id, Rating.food_item_id, Rating.rating, Rating.created_at)

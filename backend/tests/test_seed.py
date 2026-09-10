@@ -46,7 +46,12 @@ def test_seed_populates_every_table(small_seed: dict[str, object]) -> None:
     with SessionLocal() as session:
         assert session.scalar(select(func.count()).select_from(Restaurant)) == len(RESTAURANTS)
         assert session.scalar(select(func.count()).select_from(FoodItem)) == TARGET_ITEM_COUNT
-        assert session.scalar(select(func.count()).select_from(User)) == 60
+        # 60 customers plus one seeded staff account.
+        assert session.scalar(select(func.count()).select_from(User)) == 61
+        assert (
+            session.scalar(select(func.count()).select_from(User).where(User.is_admin.is_(True)))
+            == 1
+        )
         for model in (Rating, Order, OrderItem, Impression):
             assert session.scalar(select(func.count()).select_from(model)) > 0
 
@@ -84,7 +89,11 @@ def test_cold_start_users_exist(small_seed: dict[str, object]) -> None:
         counts = dict(
             session.execute(select(Rating.user_id, func.count()).group_by(Rating.user_id)).all()
         )
-        user_ids = [row[0] for row in session.execute(select(User.id)).all()]
+        # Customers only - the staff account has no ratings by construction and
+        # would make this assertion pass for the wrong reason.
+        user_ids = [
+            row[0] for row in session.execute(select(User.id).where(User.is_admin.is_(False))).all()
+        ]
 
     below_threshold = [uid for uid in user_ids if counts.get(uid, 0) < 5]
     assert below_threshold, "no user falls below the 5-rating cold-start threshold"

@@ -65,8 +65,20 @@ class RatingMatrices:
 
 
 def _axis_ids(session: Session) -> tuple[list[int], list[int]]:
+    """The item and user axes of the rating matrix.
+
+    Staff accounts are excluded. They are not customers, they have no ordering
+    history, and including them would add an all-zero column that the model must
+    carry for no benefit - as well as making the data fingerprint move whenever
+    somebody is given an admin login.
+    """
     item_ids = [row[0] for row in session.execute(select(FoodItem.id).order_by(FoodItem.id)).all()]
-    user_ids = [row[0] for row in session.execute(select(User.id).order_by(User.id)).all()]
+    user_ids = [
+        row[0]
+        for row in session.execute(
+            select(User.id).where(User.is_admin.is_(False)).order_by(User.id)
+        ).all()
+    ]
     return item_ids, user_ids
 
 

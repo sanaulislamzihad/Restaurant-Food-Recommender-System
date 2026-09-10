@@ -1,5 +1,6 @@
 """Admin payloads: the model card, and retraining."""
 
+from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -42,3 +43,66 @@ class RetrainResponse(BaseModel):
     status: str
     detail: str
     command: str = Field(description="the CLI equivalent of this request")
+
+
+# ---------------------------------------------------------------------------
+# Menu management
+# ---------------------------------------------------------------------------
+
+
+class MenuItemCreate(BaseModel):
+    restaurant_id: int
+    name: str = Field(min_length=1, max_length=160)
+    description: str = ""
+    cuisine: str = Field(min_length=1, max_length=60)
+    spice_level: int = Field(default=0, ge=0, le=5)
+    is_veg: bool = False
+    is_rice_based: bool = False
+    price: Decimal = Field(gt=0)
+    prep_time_min: int = Field(default=20, ge=1, le=240)
+    image_url: str | None = None
+    ingredient_tags: list[str] = Field(default_factory=list)
+    is_available: bool = True
+    is_promoted: bool = False
+
+
+class MenuItemUpdate(BaseModel):
+    """Every field optional: a PATCH should be able to change one thing."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = None
+    cuisine: str | None = Field(default=None, min_length=1, max_length=60)
+    spice_level: int | None = Field(default=None, ge=0, le=5)
+    is_veg: bool | None = None
+    is_rice_based: bool | None = None
+    price: Decimal | None = Field(default=None, gt=0)
+    prep_time_min: int | None = Field(default=None, ge=1, le=240)
+    image_url: str | None = None
+    ingredient_tags: list[str] | None = None
+    is_available: bool | None = None
+    is_promoted: bool | None = None
+
+
+class CuisineCoverage(BaseModel):
+    cuisine: str
+    total_items: int
+    #: Items with enough ratings for collaborative filtering to place them.
+    recommendable: int
+    #: Items with no ratings at all - only the content model can rank these.
+    cold: int
+
+
+class CoverageResponse(BaseModel):
+    """How much of the catalogue the recommender can actually reach.
+
+    A model that scores well while only ever surfacing the same few dishes is a
+    bad recommender with a good metric, so this is worth watching alongside the
+    accuracy numbers.
+    """
+
+    total_items: int
+    available_items: int
+    promoted_items: int
+    items_with_neighbours: int
+    min_item_ratings: int
+    by_cuisine: list[CuisineCoverage]
