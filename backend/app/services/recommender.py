@@ -311,7 +311,38 @@ def recommend_for_user(
 
     content_scores: dict[int, float] = {}
     if content is not None:
-        content_scores = content.score_items(user_feature_row(user), item_ids)
+        user_row = user_feature_row(user)
+        content_scores = content.score_items(user_row, item_ids)
+
+        # Dishes added to the menu since the last training run have no
+        # precomputed embedding. Embedding them on demand is the whole point of
+        # a feature-based tower: without this they would silently fall through
+        # to the item-mean fallback, which is the one case the content model
+        # exists to rescue.
+        missing = [
+            candidate.item
+            for candidate in candidates.candidates
+            if candidate.item.id not in content_scores
+        ]
+        for item in missing:
+            content_scores[item.id] = content.score_new_item(
+                user_row,
+                {
+                    "id": item.id,
+                    "cuisine": item.cuisine,
+                    "spice_level": item.spice_level,
+                    "is_veg": item.is_veg,
+                    "is_rice_based": item.is_rice_based,
+                    "price": float(item.price),
+                    "prep_time_min": item.prep_time_min,
+                    "ingredient_tags": item.ingredient_tags or [],
+                },
+            )
+        if missing:
+            logger.info(
+                "embedded %d item(s) on demand: added to the menu after training",
+                len(missing),
+            )
 
     top, diagnostics = rank_candidates(
         db,

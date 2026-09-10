@@ -48,6 +48,8 @@ class ContentModel:
 
     user_kernels: list[np.ndarray]
     user_biases: list[np.ndarray]
+    item_kernels: list[np.ndarray]
+    item_biases: list[np.ndarray]
     item_embeddings: np.ndarray
     item_ids: list[int]
     vocabulary: FeatureVocabulary
@@ -87,6 +89,36 @@ class ContentModel:
             if index < last:
                 activations = _relu(activations)
         return _l2_normalize(activations)
+
+    def _forward(
+        self, features: np.ndarray, kernels: list[np.ndarray], biases: list[np.ndarray]
+    ) -> np.ndarray:
+        activations = features
+        last = len(kernels) - 1
+        for index, (kernel, bias) in enumerate(zip(kernels, biases, strict=True)):
+            activations = activations @ kernel + bias
+            if index < last:
+                activations = _relu(activations)
+        return _l2_normalize(activations)
+
+    def embed_item(self, item: dict[str, Any]) -> np.ndarray:
+        """Embed a dish on demand, shape (32,).
+
+        Used for items the training run never saw. Everything the item tower
+        needs - cuisine, price, spice, tags - is known the moment a dish is put
+        on the menu, so a brand-new dish is embeddable immediately. Its two
+        rating-aggregate features simply fall back to "nobody has rated this",
+        which is both true and exactly the signal the flag exists to carry.
+        """
+        features = np.asarray(self._builder.item_vector(item, self.item_stats), dtype=np.float32)
+        return self._forward(features, self.item_kernels, self.item_biases)
+
+    def score_new_item(self, user: dict[str, Any], item: dict[str, Any]) -> float:
+        """Predicted rating in star units for a dish with no precomputed embedding."""
+        similarity = float(self.embed_item(item) @ self.user_embedding(user))
+        if self.mode == "implicit":
+            return float(1.0 / (1.0 + np.exp(-self.logit_scale * similarity)))
+        return float(np.clip(similarity * RATING_HALF_RANGE + RATING_MIDPOINT, 1.0, 5.0))
 
     def score_items(self, user: dict[str, Any], item_ids: list[int]) -> dict[int, float]:
         """Predicted rating for each item, in **star units**.
@@ -152,11 +184,18 @@ def load_content_model(root: Path, version: str) -> ContentModel | None:
         depth = int(data["n_layers"])
         user_kernels = [data[f"user_kernel_{i}"] for i in range(depth)]
         user_biases = [data[f"user_bias_{i}"] for i in range(depth)]
+        # Older artifacts predate the item tower export; fall back to the
+        # precomputed embeddings alone rather than refusing to load.
+        has_item_tower = f"item_kernel_{depth - 1}" in data
+        item_kernels = [data[f"item_kernel_{i}"] for i in range(depth)] if has_item_tower else []
+        item_biases = [data[f"item_bias_{i}"] for i in range(depth)] if has_item_tower else []
         item_embeddings = data["item_embeddings"]
 
     return ContentModel(
         user_kernels=user_kernels,
         user_biases=user_biases,
+        item_kernels=item_kernels,
+        item_biases=item_biases,
         item_embeddings=item_embeddings,
         item_ids=[int(i) for i in meta["item_ids"]],
         vocabulary=FeatureVocabulary.from_dict(meta["vocabulary"]),

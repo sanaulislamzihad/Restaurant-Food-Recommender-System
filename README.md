@@ -21,7 +21,7 @@ Built milestone by milestone. Current progress:
 - [x] **M3** — evaluation harness and baseline comparison
 - [x] **M4** — FastAPI backend
 - [x] **M5** — Next.js frontend
-- [ ] **M6** — two-tower content model, hybrid scoring, retrieval + ranking
+- [x] **M6** — two-tower content model, hybrid scoring, retrieval + ranking
 - [ ] **M7** — docs, admin dashboard, CI
 
 ## Stack
@@ -136,11 +136,28 @@ invalidates them implicitly. Measured 30.7 ms uncached against 0.6 ms cached.
 Redis is used when `REDIS_URL` is set and an in-process TTL cache when it is
 not, so the API runs with no external services at all.
 
-After training, rebuild the "similar items" index:
+Train the content half and rebuild the "similar items" index:
 
 ```bash
-python -m ml.build_neighbors
+python -m ml.train_content     # two-tower content model
+python -m ml.build_neighbors   # collaborative "similar items" index
+python -m ml.evaluate          # held-out comparison against baselines
 ```
+
+### How a recommendation is produced
+
+```
+retrieve ~150 candidates            rank them
+├─ neighbours of recent orders      score = α·collaborative + (1−α)·content
+├─ top dishes in favourite cuisines α forced to 0 when the user or the item
+└─ popular overall  ← the floor       is too new for collaborative filtering
+                                    then: drop sold-out, drop ordered in the
+                                    last 24h, boost promotions
+```
+
+Both terms are in star units, so the blend adds two quantities that mean the
+same thing. Measured on the seeded data: retrieval 9.2 ms, ranking 6.7 ms,
+25.6 ms end to end uncached and 0.18 ms cached.
 
 ## Results
 
@@ -153,12 +170,21 @@ limitations that qualify these numbers are in
 | global mean | 0.9689 | 0.0257 | 6.3% |
 | item mean | 0.8870 | 0.0331 | 5.0% |
 | most popular | — | 0.0681 | 14.6% |
-| **collaborative filtering** | **0.7268** | **0.0908** | **74.2%** |
+| collaborative filtering | 0.7268 | 0.0908 | **74.2%** |
+| **content (two-tower)** | **0.5716** | **0.1163** | 62.9% |
+| hybrid (α = 0.2) | 0.5721 | 0.1130 | 62.6% |
 
-Collaborative filtering beats item-mean by 18.1% on RMSE and 174% on NDCG@10,
-while reaching 74.2% of the menu instead of 5%. It is also close to
-popularity-neutral: 10.3% of its recommendations land in the top popularity
-decile, against 99.5% for the most-popular baseline.
+Both learned models beat every baseline by a wide margin, and **the content
+model beats collaborative filtering** — which inverts the usual arrangement.
+That is very likely an artifact of synthetic data: the generator builds ratings
+out of cuisine affinity and spice tolerance, and the content model receives
+exactly those as inputs. [`docs/EVALUATION.md`](docs/EVALUATION.md) sets out the
+argument and says plainly not to trust α = 0.2 on real data without re-running
+the sweep.
+
+Collaborative filtering keeps the wider reach: 74.2% catalogue coverage against
+62.9%, and it is close to popularity-neutral — 10.3% of its recommendations land
+in the top popularity decile against 99.5% for most-popular.
 
 ## Documentation
 

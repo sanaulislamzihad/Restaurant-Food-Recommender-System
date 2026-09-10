@@ -443,3 +443,81 @@ def test_ranking_falls_back_to_the_item_mean_when_no_model_can_score(
     )
     assert diagnostics.scored_by_fallback == 1
     assert top[0].score == pytest.approx(5.0)
+
+
+# ---------------------------------------------------------------------------
+# Item-side cold start
+# ---------------------------------------------------------------------------
+
+
+def _fake_content_model():
+    """A ContentModel with random weights, for exercising the plumbing."""
+    from ml.content_inference import ContentModel
+
+    builder = _builder()
+    rng = np.random.default_rng(0)
+    n_user = len(builder.user_columns)
+    n_item = len(builder.item_columns)
+
+    def tower(n_in: int) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        widths = [n_in, 16, 8, 4]
+        kernels = [rng.normal(size=(widths[i], widths[i + 1])).astype(np.float32) for i in range(3)]
+        biases = [rng.normal(size=(widths[i + 1],)).astype(np.float32) for i in range(3)]
+        return kernels, biases
+
+    user_kernels, user_biases = tower(n_user)
+    item_kernels, item_biases = tower(n_item)
+
+    return ContentModel(
+        user_kernels=user_kernels,
+        user_biases=user_biases,
+        item_kernels=item_kernels,
+        item_biases=item_biases,
+        item_embeddings=np.zeros((0, 4), dtype=np.float32),
+        item_ids=[],
+        vocabulary=builder.vocabulary,
+        item_stats=ItemStats(),
+        user_stats=UserStats(),
+        mode="explicit",
+        logit_scale=1.0,
+        metadata={},
+    )
+
+
+NEW_DISH = {
+    "id": 9_999,
+    "cuisine": "bengali",
+    "spice_level": 5,
+    "is_veg": False,
+    "is_rice_based": False,
+    "price": 520.0,
+    "prep_time_min": 45,
+    "ingredient_tags": ["chilli"],
+}
+
+
+def test_a_dish_added_after_training_can_still_be_embedded() -> None:
+    """The item-side cold start. Without the item tower exported alongside the
+    precomputed embeddings, a new dish could not be scored at all - which is the
+    one case a feature-based tower exists to handle."""
+    model = _fake_content_model()
+    assert NEW_DISH["id"] not in model.item_index()
+
+    embedding = model.embed_item(NEW_DISH)
+    assert embedding.shape == (4,)
+    assert float(embedding @ embedding) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_a_new_dish_is_scored_differently_for_different_users() -> None:
+    """A score that ignored the user would make the whole exercise pointless."""
+    model = _fake_content_model()
+    hot = {"id": 1, "age": 30, "gender": "male", "area": "Dhanmondi", "spice_tolerance": 5}
+    mild = {"id": 2, "age": 30, "gender": "male", "area": "Dhanmondi", "spice_tolerance": 0}
+
+    assert model.score_new_item(hot, NEW_DISH) != model.score_new_item(mild, NEW_DISH)
+
+
+def test_an_on_demand_score_stays_on_the_rating_scale() -> None:
+    model = _fake_content_model()
+    user = {"id": 1, "age": 30, "gender": "male", "area": "Dhanmondi", "spice_tolerance": 3}
+    assert 1.0 <= model.score_new_item(user, NEW_DISH) <= 5.0

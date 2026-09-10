@@ -208,6 +208,7 @@ def save_content_artifacts(
 
     user_weights = TowerWeights.from_keras(extract_tower(model, "user_NN"))
     item_tower = extract_tower(model, "item_NN")
+    item_weights = TowerWeights.from_keras(item_tower)
 
     # Item embeddings are computed once, here, and never at request time.
     raw = item_tower.predict(item_matrix, batch_size=512, verbose=0)
@@ -223,6 +224,15 @@ def save_content_artifacts(
     ):
         payload[f"user_kernel_{index}"] = kernel
         payload[f"user_bias_{index}"] = bias
+    # The item tower is exported as well, not only its precomputed outputs. A
+    # dish added to the menu after training has no precomputed embedding, and
+    # without the weights the model could not score the very case - a brand-new
+    # item - that it exists to handle.
+    for index, (kernel, bias) in enumerate(
+        zip(item_weights.kernels, item_weights.biases, strict=True)
+    ):
+        payload[f"item_kernel_{index}"] = kernel
+        payload[f"item_bias_{index}"] = bias
     np.savez_compressed(directory / CONTENT_WEIGHTS_FILE, **payload)  # type: ignore[arg-type]
 
     logit_scale = 1.0
