@@ -108,6 +108,7 @@ export interface UserResponse {
   gender: Gender | null;
   area: string | null;
   spice_tolerance: number;
+  is_admin: boolean;
   created_at: string;
 }
 
@@ -182,4 +183,90 @@ export interface MenuQuery {
   sort?: MenuSort;
   limit?: number;
   offset?: number;
+}
+
+
+// ---------------------------------------------------------------------------
+// Admin
+// ---------------------------------------------------------------------------
+
+export interface ModelCard {
+  version: string;
+  model: string | null;
+  trained_at: string | null;
+  hyperparameters: Record<string, unknown>;
+  data: Record<string, unknown>;
+  training_metrics: Record<string, number>;
+  runtime_seconds: number | null;
+  tensorflow_version: string | null;
+}
+
+export interface EvaluationResult {
+  name: string;
+  detail: string;
+  rmse: number | null;
+  mae: number | null;
+  precision_at_k: number;
+  recall_at_k: number;
+  ndcg_at_k: number;
+  catalogue_coverage: number;
+  gini: number;
+}
+
+export interface EvaluationReport {
+  evaluated_at: string;
+  protocol: Record<string, unknown>;
+  results: EvaluationResult[];
+}
+
+export interface ModelMetricsResponse {
+  loaded: ModelCard | null;
+  available_versions: string[];
+  neighbours_indexed: number;
+  evaluation: EvaluationReport | null;
+}
+
+export interface CuisineCoverage {
+  cuisine: string;
+  total_items: number;
+  recommendable: number;
+  cold: number;
+}
+
+export interface CoverageResponse {
+  total_items: number;
+  available_items: number;
+  promoted_items: number;
+  items_with_neighbours: number;
+  min_item_ratings: number;
+  by_cuisine: CuisineCoverage[];
+}
+
+export interface RetrainResponse {
+  status: string;
+  detail: string;
+  command: string;
+}
+
+export interface MenuItemUpdate {
+  name?: string;
+  price?: string;
+  spice_level?: number;
+  is_available?: boolean;
+  is_promoted?: boolean;
+}
+
+export interface FoodItemCreatePayload {
+  restaurant_id: number;
+  name: string;
+  description?: string;
+  cuisine: string;
+  spice_level?: number;
+  is_veg?: boolean;
+  is_rice_based?: boolean;
+  price: string;
+  prep_time_min?: number;
+  ingredient_tags?: string[];
+  is_available?: boolean;
+  is_promoted?: boolean;
 }

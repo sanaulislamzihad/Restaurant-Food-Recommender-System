@@ -8,6 +8,7 @@ does — SQLite locally, Postgres in docker-compose and CI.
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.types import TypeDecorator
 
 from alembic import context
 from app.core.config import get_settings
@@ -26,6 +27,31 @@ settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 
+def _compare_type(
+    context: object,
+    inspected_column: object,
+    metadata_column: object,
+    inspected_type: object,
+    metadata_type: object,
+) -> bool | None:
+    """Compare a TypeDecorator by the type it stores, not by its own class.
+
+    Alembic compares the declared column type against what the database
+    reports. ``TZDateTime`` stores a DateTime but is not one, so on Postgres
+    every timestamp column came back as a type change on every run and
+    ``alembic check`` failed permanently while the schema was in fact correct.
+
+    SQLite never showed this - its reflected types compare differently - which
+    is exactly why CI runs the migrations against a real Postgres.
+
+    Returning None defers to Alembic's own comparison for everything else.
+    """
+    if isinstance(metadata_type, TypeDecorator):
+        impl = getattr(metadata_type, "impl_instance", metadata_type.impl)
+        return not isinstance(inspected_type, type(impl))
+    return None
+
+
 def _configure_common() -> dict[str, object]:
     """Options shared by the offline and online paths.
 
@@ -35,7 +61,7 @@ def _configure_common() -> dict[str, object]:
     """
     return {
         "target_metadata": target_metadata,
-        "compare_type": True,
+        "compare_type": _compare_type,
         "compare_server_default": True,
         "render_as_batch": settings.is_sqlite,
     }

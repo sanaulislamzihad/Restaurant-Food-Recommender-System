@@ -49,6 +49,9 @@ packages = ["app", "ml", "scripts"]
 [tool.black]
 line-length = 100
 target-version = ["py311"]
+# Alembic generates these; reformatting generated revisions creates noisy diffs
+# and `black --check .` in CI would fail on files nobody wrote by hand.
+extend-exclude = "alembic/versions"
 
 [tool.ruff]
 line-length = 100
@@ -71,6 +74,9 @@ ignore = [
 # TypeDecorator.process_bind_param/process_result_value take `dialect`
 # whether or not an implementation uses it; the signature is not ours.
 "app/db/models.py" = ["ARG002"]
+# Alembic's compare_type callback is handed five arguments; a comparison that
+# only needs two still has to accept all five.
+"alembic/env.py" = ["ARG001"]
 
 [tool.mypy]
 python_version = "3.11"

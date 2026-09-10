@@ -17,6 +17,8 @@ const LINKS = [
   { href: "/profile", label: "Profile" },
 ];
 
+const ADMIN_LINK = { href: "/admin", label: "Admin" };
+
 export function SiteHeader() {
   const pathname = usePathname();
   const { user, logout, isLoading } = useAuth();
@@ -43,7 +45,9 @@ export function SiteHeader() {
         </Link>
 
         <nav className="ml-2 hidden items-center gap-1 md:flex" aria-label="Main">
-          {LINKS.map((link) => {
+          {/* The API enforces the role; hiding the link just avoids offering a
+              page the customer cannot use. */}
+          {(user?.is_admin ? [...LINKS, ADMIN_LINK] : LINKS).map((link) => {
             const active =
               link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
             return (
@@ -124,7 +128,7 @@ export function SiteHeader() {
       {open ? (
         <nav className="border-t border-border px-4 py-3 md:hidden" aria-label="Mobile">
           <ul className="space-y-1">
-            {LINKS.map((link) => (
+            {(user?.is_admin ? [...LINKS, ADMIN_LINK] : LINKS).map((link) => (
               <li key={link.href}>
                 <Link
                   href={link.href}

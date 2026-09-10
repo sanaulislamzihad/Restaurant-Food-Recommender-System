@@ -13,6 +13,8 @@
  */
 
 import type {
+  CoverageResponse,
+  FoodItemCreatePayload,
   FoodItemDetail,
   FoodItemSummary,
   ImpressionBatchResponse,
@@ -22,7 +24,10 @@ import type {
   RatingResponse,
   RatingWithItem,
   RecommendationResponse,
+  MenuItemUpdate,
+  ModelMetricsResponse,
   RegisterPayload,
+  RetrainResponse,
   TasteProfile,
   TokenResponse,
   UserResponse,
@@ -236,6 +241,47 @@ export const api = {
       `/api/orders/history${toQuery({ limit, offset })}`,
       { auth: true },
     );
+  },
+
+  // ---- Admin ------------------------------------------------------------
+
+  modelMetrics() {
+    return request<ModelMetricsResponse>("/api/admin/model/metrics", { auth: true });
+  },
+
+  coverage() {
+    return request<CoverageResponse>("/api/admin/coverage", { auth: true });
+  },
+
+  retrain(payload: { mode: string; iterations: number; lambda: number }) {
+    return request<RetrainResponse>("/api/admin/model/retrain", {
+      method: "POST",
+      auth: true,
+      body: payload,
+    });
+  },
+
+  createMenuItem(payload: FoodItemCreatePayload) {
+    return request<FoodItemDetail>("/api/admin/menu", {
+      method: "POST",
+      auth: true,
+      body: payload,
+    });
+  },
+
+  updateMenuItem(itemId: number, payload: MenuItemUpdate) {
+    return request<FoodItemDetail>(`/api/admin/menu/${itemId}`, {
+      method: "PATCH",
+      auth: true,
+      body: payload,
+    });
+  },
+
+  retireMenuItem(itemId: number) {
+    return request<{ detail: string }>(`/api/admin/menu/${itemId}`, {
+      method: "DELETE",
+      auth: true,
+    });
   },
 
   logImpressions(

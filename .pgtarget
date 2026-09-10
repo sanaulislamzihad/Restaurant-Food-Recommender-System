@@ -1,0 +1,1 @@
+postgresql+psycopg://postgres:@127.0.0.1:6707/foodrec_test
