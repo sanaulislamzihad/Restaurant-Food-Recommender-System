@@ -157,6 +157,9 @@ class FoodItem(Base):
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     ingredient_tags: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     is_available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    # The ranking stage boosts promoted dishes. Without a column the rule would
+    # be written but permanently inert, which is worse than not having it.
+    is_promoted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, default=_utcnow)
 
     restaurant: Mapped["Restaurant"] = relationship(back_populates="food_items")

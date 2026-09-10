@@ -47,5 +47,21 @@ class RecommendationResponse(BaseModel):
     candidates_considered: int = Field(
         default=0, description="size of the retrieval stage's candidate list"
     )
-    latency_ms: float = Field(default=0.0, description="server-side ranking time")
+    # The brief asks for retrieval size and ranking latency to be logged so the
+    # two-stage trade-off can be measured; they are returned as well, because a
+    # number in a log file is far harder to act on than one in the response.
+    retrieval_ms: float = Field(default=0.0, description="time spent building candidates")
+    ranking_ms: float = Field(default=0.0, description="time spent scoring candidates")
+    retrieval_sources: dict[str, int] = Field(
+        default_factory=dict,
+        description="how many candidates each retrieval source contributed",
+    )
+    scoring_breakdown: dict[str, int] = Field(
+        default_factory=dict,
+        description="how the returned items were scored: hybrid, content-only, etc.",
+    )
+    dropped_recently_ordered: int = Field(
+        default=0, description="candidates suppressed for having been ordered very recently"
+    )
+    latency_ms: float = Field(default=0.0, description="total server-side time")
     cached: bool = False

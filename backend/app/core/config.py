@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     reco_min_item_ratings: int = 3
     reco_candidate_target: int = 150
     reco_top_n: int = 20
+    #: Added to a promoted dish's blended score, in star units. Big enough to
+    #: lift a dish past a near neighbour, too small to float a bad one to the
+    #: top - a promotion should tip a close call, not override the model.
+    reco_promotion_boost: float = 0.25
+    #: Dishes ordered inside this window are suppressed; nobody wants the same
+    #: dinner recommended to them the next morning.
+    reco_repeat_suppression_hours: int = 24
 
     # ---- Model artifacts ------------------------------------------------
     model_dir: str = "models"

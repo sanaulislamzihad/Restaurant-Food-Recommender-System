@@ -484,7 +484,8 @@ def test_a_warm_user_gets_model_backed_recommendations(trained_model: TestClient
     ).json()
 
     assert body["is_cold_start"] is False
-    assert body["model_version"] == "v1"
+    # The label now names both halves; the content model is absent in tests.
+    assert body["model_version"].startswith("v1")
     assert body["candidates_considered"] > 0
     assert all(item["reason"] for item in body["items"])
 
@@ -545,7 +546,8 @@ def test_similar_items_cites_the_source_dish(client: TestClient) -> None:
 
     assert len(body["items"]) == 1
     assert body["items"][0]["item"]["name"] == "Beef Bhuna"
-    assert body["items"][0]["reason"] == "Similar to Kacchi Biryani"
+    # Wording distinguishes collaborative similarity from content similarity.
+    assert body["items"][0]["reason"] == "Also enjoyed by people who like Kacchi Biryani"
 
 
 def test_similar_items_is_empty_rather_than_an_error_for_an_unknown_item(
@@ -598,9 +600,7 @@ def test_retrain_reports_the_command_instead_of_training_in_process(client: Test
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "origin", ["http://localhost:3000", "http://127.0.0.1:3000"]
-)
+@pytest.mark.parametrize("origin", ["http://localhost:3000", "http://127.0.0.1:3000"])
 def test_both_development_origins_are_allowed(client: TestClient, origin: str) -> None:
     """A browser treats localhost and 127.0.0.1 as different origins.
 

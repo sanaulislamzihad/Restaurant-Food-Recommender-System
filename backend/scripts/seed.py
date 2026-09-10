@@ -78,6 +78,11 @@ NEW_ITEM_COUNT = 16
 #: Fraction of users deliberately left below the cold-start threshold.
 COLD_START_USER_FRACTION = 0.05
 
+#: Dishes flagged as promoted, so the ranking stage's boost rule has subjects.
+PROMOTED_ITEM_COUNT = 18
+#: A fixed, separate seed: promotions must not perturb the rating stream.
+PROMOTION_SEED_OFFSET = 20_260_910
+
 TASTE_CLUSTERS: tuple[str, ...] = ("spicy_desi", "continental", "dessert_lover")
 CLUSTER_WEIGHTS: tuple[float, ...] = (0.42, 0.34, 0.24)
 
@@ -340,6 +345,7 @@ def _build_food_items(rng: np.random.Generator, now: datetime) -> list[dict[str,
                     "image_url": None,
                     "ingredient_tags": list(dish.ingredient_tags),
                     "is_available": True,
+                    "is_promoted": False,
                     # Overwritten below for the designated new arrivals.
                     "created_at": now - timedelta(days=HISTORY_DAYS + 5),
                 }
@@ -356,6 +362,15 @@ def _build_food_items(rng: np.random.Generator, now: datetime) -> list[dict[str,
     # A few items are temporarily off the menu; the ranking stage must drop them.
     for idx in rng.choice(len(rows), size=12, replace=False):
         rows[idx]["is_available"] = False
+
+    # Promotions are drawn from their own generator rather than `rng`. Taking
+    # them from the shared stream would shift every subsequent draw and change
+    # the ratings, invalidating the trained model and every published metric for
+    # the sake of a display flag.
+    promo_rng = np.random.default_rng(PROMOTION_SEED_OFFSET)
+    for idx in promo_rng.choice(len(rows), size=PROMOTED_ITEM_COUNT, replace=False):
+        if rows[idx]["is_available"]:
+            rows[idx]["is_promoted"] = True
 
     return rows
 

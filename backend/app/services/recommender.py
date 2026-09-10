@@ -1,23 +1,16 @@
 """Recommendation serving.
 
-Loads the trained collaborative filtering artifacts once per process and scores
-against them. No training, no TensorFlow, no distance computation happens here:
-prediction is a dot product over saved numpy arrays, and item similarity is a
-lookup in a table the offline job filled in.
+The request path is retrieval then ranking:
 
-Three entry points, matching the three endpoints:
+    retrieve ~150 candidates (indexed queries)  ->  score them (hybrid model)
 
-* :func:`recommend_for_user` - the personalised feed
-* :func:`similar_items` - "you liked this, try these"
-* :func:`popular_items` - the cold-start fallback, and the anonymous home page
+Neither stage needs TensorFlow. Collaborative predictions are a dot product over
+saved numpy arrays, the content user tower is three numpy matrix multiplies, and
+item similarity is a lookup in a table an offline job filled in.
 
-Every returned item carries a ``reason``. The reason is derived from what
-actually put the item in the list, so it can never claim a connection the data
-does not support.
-
-M4 scope note: this ranks the whole catalogue directly. The two-stage retrieval
-pipeline and the hybrid content blend belong to M6, and the seams they need -
-candidate counting, source attribution - are already here.
+Both models are optional and independently versioned. With neither, the API
+still serves popularity; with only one, it serves that one. A missing model
+degrades the feed, it does not take the service down.
 """
 
 from __future__ import annotations
@@ -45,17 +38,18 @@ from app.schemas.recommendation import (
     RecommendationSource,
     RecommendedItem,
 )
-from ml.artifacts import CFArtifacts, load_cf_artifacts
+from app.services.ranking import describe, rank_candidates, user_feature_row
+from app.services.retrieval import retrieve_candidates
+from ml.artifacts import CFArtifacts, latest_version_with, load_cf_artifacts
+from ml.content_inference import (
+    CONTENT_WEIGHTS_FILE,
+    ContentModel,
+    load_content_model,
+)
 
 logger = logging.getLogger(__name__)
 
-#: A rating at or above this counts as "you liked it" when explaining a
-#: recommendation. Saying "because you liked X" about a dish somebody gave two
-#: stars would be worse than giving no reason at all.
 LIKED_THRESHOLD = 4.0
-
-#: How many of the user's liked dishes are used to attribute reasons.
-REASON_SOURCE_LIMIT = 10
 
 
 @dataclass
@@ -66,35 +60,44 @@ class LoadedModel:
 
 
 class _ModelHolder:
-    """Process-wide holder for the trained model.
+    """Process-wide holder for both trained models.
 
     Loaded lazily on first use rather than at import, so the API still starts
-    and serves the menu when no model has been trained yet. A missing model
-    degrades recommendations to the popularity fallback; it does not take the
-    service down.
+    and serves the menu before anything has been trained.
     """
 
     def __init__(self) -> None:
-        self._model: LoadedModel | None = None
+        self._collaborative: LoadedModel | None = None
+        self._content: ContentModel | None = None
         self._attempted = False
         self._lock = threading.Lock()
 
-    def get(self) -> LoadedModel | None:
-        if self._model is None and not self._attempted:
-            with self._lock:
-                if self._model is None and not self._attempted:
-                    self._attempted = True
-                    self._model = self._load()
-        return self._model
+    def _ensure(self) -> None:
+        if self._attempted:
+            return
+        with self._lock:
+            if self._attempted:
+                return
+            self._attempted = True
+            self._collaborative = self._load_collaborative()
+            self._content = self._load_content()
 
-    def reload(self) -> LoadedModel | None:
+    def collaborative(self) -> LoadedModel | None:
+        self._ensure()
+        return self._collaborative
+
+    def content(self) -> ContentModel | None:
+        self._ensure()
+        return self._content
+
+    def reload(self) -> None:
         with self._lock:
             self._attempted = True
-            self._model = self._load()
-        return self._model
+            self._collaborative = self._load_collaborative()
+            self._content = self._load_content()
 
     @staticmethod
-    def _load() -> LoadedModel | None:
+    def _load_collaborative() -> LoadedModel | None:
         settings = get_settings()
         try:
             artifacts = load_cf_artifacts(
@@ -102,32 +105,64 @@ class _ModelHolder:
             )
         except FileNotFoundError:
             logger.warning(
-                "No trained model available; recommendations will fall back to popularity. "
+                "No collaborative model; the feed falls back to content and popularity. "
                 "Run `python -m ml.train_cf`."
             )
             return None
-        logger.info("loaded collaborative filtering model %s", artifacts.version)
+        logger.info("loaded collaborative model %s", artifacts.version)
         return LoadedModel(
             artifacts=artifacts,
             user_index=artifacts.user_index(),
             item_index=artifacts.item_index(),
         )
 
+    @staticmethod
+    def _load_content() -> ContentModel | None:
+        settings = get_settings()
+        root = settings.model_root
+        version = latest_version_with(root, CONTENT_WEIGHTS_FILE)
+        if version is None:
+            logger.warning(
+                "No content model; cold-start users get popularity only. "
+                "Run `python -m ml.train_content`."
+            )
+            return None
+        model = load_content_model(root, version)
+        if model is not None:
+            logger.info("loaded content model %s", version)
+        return model
+
 
 _holder = _ModelHolder()
 
 
 def get_model() -> LoadedModel | None:
-    return _holder.get()
+    return _holder.collaborative()
+
+
+def get_content_model() -> ContentModel | None:
+    return _holder.content()
 
 
 def reload_model() -> LoadedModel | None:
-    """Drop and re-read the artifacts. Called after a retrain."""
-    return _holder.reload()
+    """Drop and re-read both models. Called after a retrain."""
+    _holder.reload()
+    return _holder.collaborative()
+
+
+def model_version_label() -> str:
+    """Identifies the serving configuration, for cache keys and responses."""
+    collaborative = _holder.collaborative()
+    content = _holder.content()
+    parts = [
+        collaborative.artifacts.version if collaborative else "none",
+        content.version if content else "none",
+    ]
+    return "+".join(parts)
 
 
 # ---------------------------------------------------------------------------
-# Queries
+# Shared queries
 # ---------------------------------------------------------------------------
 
 
@@ -135,47 +170,7 @@ def _available_items_query() -> Select[tuple[FoodItem]]:
     return select(FoodItem).where(FoodItem.is_available.is_(True))
 
 
-def _liked_items(db: Session, user_id: int, limit: int = REASON_SOURCE_LIMIT) -> list[FoodItem]:
-    """The user's most recent well-rated dishes, newest first."""
-    rows = db.execute(
-        select(FoodItem)
-        .join(Rating, Rating.food_item_id == FoodItem.id)
-        .where(Rating.user_id == user_id, Rating.rating >= LIKED_THRESHOLD)
-        .order_by(Rating.created_at.desc())
-        .limit(limit)
-    ).scalars()
-    return list(rows)
-
-
-def _neighbour_attribution(db: Session, liked: list[FoodItem]) -> dict[int, str]:
-    """Map candidate item id -> the liked dish that explains it.
-
-    Built from the precomputed neighbour table, so "because you liked X" only
-    ever appears when X really is among the item's nearest neighbours in the
-    learned feature space.
-    """
-    if not liked:
-        return {}
-
-    liked_ids = [item.id for item in liked]
-    names = {item.id: item.name for item in liked}
-
-    rows = db.execute(
-        select(ItemNeighbor.food_item_id, ItemNeighbor.neighbor_id)
-        .where(ItemNeighbor.food_item_id.in_(liked_ids))
-        .order_by(ItemNeighbor.food_item_id, ItemNeighbor.rank)
-    ).all()
-
-    attribution: dict[int, str] = {}
-    for source_id, neighbour_id in rows:
-        # First writer wins, and liked items arrive newest first, so the
-        # explanation cites the most recent thing the user enjoyed.
-        attribution.setdefault(neighbour_id, names[source_id])
-    return attribution
-
-
 def _rating_stats(db: Session) -> dict[int, tuple[int, float]]:
-    """item id -> (rating count, average rating)."""
     rows = db.execute(
         select(Rating.food_item_id, func.count(), func.avg(Rating.rating)).group_by(
             Rating.food_item_id
@@ -192,10 +187,9 @@ def _rating_stats(db: Session) -> dict[int, tuple[int, float]]:
 def popular_items(db: Session, limit: int = 20, *, cache: Cache | None = None) -> list[FoodItem]:
     """Most-rated available dishes, best average breaking ties.
 
-    Ordering by count first and average second on purpose: a dish with one
-    five-star rating is not more popular than one with four hundred at 4.6, and
-    ranking by average alone would fill the page with obscure items that
-    happened to please the two people who tried them.
+    Count first, average second: a dish with one five-star rating is not more
+    popular than one with four hundred at 4.6, and ranking by average alone
+    fills the page with obscure items that pleased the two people who tried them.
     """
     cache = cache or get_cache()
     key = popular_key(limit)
@@ -217,7 +211,8 @@ def popular_items(db: Session, limit: int = 20, *, cache: Cache | None = None) -
             .where(FoodItem.is_available.is_(True))
             .group_by(FoodItem.id)
             .order_by(
-                func.count(Rating.id).desc(), func.coalesce(func.avg(Rating.rating), 0).desc()
+                func.count(Rating.id).desc(),
+                func.coalesce(func.avg(Rating.rating), 0).desc(),
             )
             .limit(limit)
         )
@@ -269,90 +264,103 @@ def popular_response(db: Session, limit: int = 20) -> RecommendationResponse:
 def recommend_for_user(
     db: Session, user: User, limit: int = 20, *, cache: Cache | None = None
 ) -> RecommendationResponse:
-    """Personalised recommendations, with a popularity fallback for cold users."""
+    """Retrieve, then rank. The full pipeline."""
     settings = get_settings()
     cache = cache or get_cache()
     started = time.perf_counter()
 
-    rating_count = (
-        db.scalar(select(func.count()).select_from(Rating).where(Rating.user_id == user.id)) or 0
-    )
-    model = get_model()
-
-    # Three separate reasons to fall back, all landing in the same place: no
-    # model on disk, a user the model has never seen, or a user with too little
-    # history for their learned parameters to mean anything.
-    if model is None or user.id not in model.user_index:
-        return popular_response(db, limit)
-    if rating_count < settings.reco_min_user_ratings:
-        response = popular_response(db, limit)
-        response.is_cold_start = True
-        return response
-
-    key = recommendations_key(user.id, model.artifacts.version, limit)
+    version = model_version_label()
+    key = recommendations_key(user.id, version, limit)
     cached = cache.get(key)
     if cached is not None:
         try:
             response = RecommendationResponse.model_validate(cached)
             response.cached = True
-            # Report this request's latency, not the stored one. Echoing the
-            # original computation's timing would make a cache hit look like it
-            # took 30ms and quietly hide the thing the field exists to measure.
             response.latency_ms = round((time.perf_counter() - started) * 1000, 2)
             return response
         except ValueError:
             logger.warning("stale cache shape for %s; recomputing", key)
 
-    column = model.user_index[user.id]
-    predictions = model.artifacts.predict_for_user_index(column)
+    collaborative = _holder.collaborative()
+    content = _holder.content()
 
-    already_rated = {
-        row[0]
-        for row in db.execute(select(Rating.food_item_id).where(Rating.user_id == user.id)).all()
-    }
-    available = db.execute(_available_items_query()).scalars().all()
+    rating_count = (
+        db.scalar(select(func.count()).select_from(Rating).where(Rating.user_id == user.id)) or 0
+    )
+    is_cold_start = rating_count < settings.reco_min_user_ratings
 
-    candidates: list[tuple[float, FoodItem]] = []
-    for item in available:
-        if item.id in already_rated:
-            continue
-        row = model.item_index.get(item.id)
-        if row is None:
-            # Added to the menu after the model was trained. It has no learned
-            # features, so collaborative filtering has nothing to say about it;
-            # the content model in M6 is what will rescue these.
-            continue
-        candidates.append((float(predictions[row]), item))
+    # With no model at all there is nothing to rank with; popularity is the
+    # honest answer rather than an arbitrary ordering dressed up as one.
+    if collaborative is None and content is None:
+        return popular_response(db, limit)
 
-    candidates.sort(key=lambda pair: pair[0], reverse=True)
-    top = candidates[:limit]
+    candidates = retrieve_candidates(db, user.id)
+    if not candidates.candidates:
+        return popular_response(db, limit)
 
-    liked = _liked_items(db, user.id)
-    attribution = _neighbour_attribution(db, liked)
+    item_ids = candidates.item_ids
 
-    recommended = []
-    for score, item in top:
-        source_name = attribution.get(item.id)
-        if source_name:
-            reason = f"Because you liked {source_name}"
-            source = RecommendationSource.SIMILAR_TO_ORDERED
-        else:
-            reason = "Popular with customers who share your taste"
-            source = RecommendationSource.COLLABORATIVE
-        recommended.append(
-            RecommendedItem(
-                item=FoodItemSummary.model_validate(item),
-                score=round(score, 4),
-                reason=reason,
-                source=source,
-            )
-        )
+    collaborative_scores: dict[int, float] = {}
+    if collaborative is not None and user.id in collaborative.user_index:
+        column = collaborative.user_index[user.id]
+        predictions = collaborative.artifacts.predict_for_user_index(column)
+        for item_id in item_ids:
+            row = collaborative.item_index.get(item_id)
+            if row is not None:
+                collaborative_scores[item_id] = float(predictions[row])
+
+    content_scores: dict[int, float] = {}
+    if content is not None:
+        content_scores = content.score_items(user_feature_row(user), item_ids)
+
+    top, diagnostics = rank_candidates(
+        db,
+        user,
+        candidates.candidates,
+        settings=settings,
+        user_rating_count=rating_count,
+        collaborative_scores=collaborative_scores,
+        content_scores=content_scores,
+        limit=limit,
+    )
+
+    logger.info(
+        "recommendations user=%s retrieved=%d ranked=%d retrieval_ms=%.1f ranking_ms=%.1f "
+        "hybrid=%d content_only=%d cf_only=%d fallback=%d",
+        user.id,
+        len(candidates),
+        len(top),
+        candidates.retrieval_ms,
+        diagnostics.ranking_ms,
+        diagnostics.scored_by_hybrid,
+        diagnostics.scored_by_content_only,
+        diagnostics.scored_by_collaborative_only,
+        diagnostics.scored_by_fallback,
+    )
 
     response = RecommendationResponse(
-        items=recommended,
-        model_version=model.artifacts.version,
-        is_cold_start=False,
+        items=[
+            RecommendedItem(
+                item=FoodItemSummary.model_validate(entry.candidate.item),
+                score=round(entry.score, 4),
+                reason=describe(entry),
+                source=entry.candidate.source,
+            )
+            for entry in top
+        ],
+        model_version=version,
+        is_cold_start=is_cold_start,
         candidates_considered=len(candidates),
+        retrieval_ms=candidates.retrieval_ms,
+        ranking_ms=diagnostics.ranking_ms,
+        retrieval_sources=candidates.source_counts,
+        scoring_breakdown={
+            "hybrid": diagnostics.scored_by_hybrid,
+            "content_only": diagnostics.scored_by_content_only,
+            "collaborative_only": diagnostics.scored_by_collaborative_only,
+            "item_mean_fallback": diagnostics.scored_by_fallback,
+        },
+        dropped_recently_ordered=diagnostics.dropped_recent,
         latency_ms=round((time.perf_counter() - started) * 1000, 2),
     )
     cache.set(key, response.model_dump(mode="json"), settings.cache_ttl_seconds)
@@ -367,14 +375,17 @@ def recommend_for_user(
 def similar_items(
     db: Session, item_id: int, limit: int = 10, *, cache: Cache | None = None
 ) -> RecommendationResponse:
-    """Nearest neighbours of one dish, straight from the precomputed table."""
+    """Dishes similar to this one.
+
+    Prefers the collaborative neighbour table, which reflects how people
+    actually rate. Falls back to content-embedding similarity for a dish too new
+    to have neighbours - the case the collaborative model cannot serve at all.
+    """
     cache = cache or get_cache()
     started = time.perf_counter()
 
-    model = get_model()
-    version = model.artifacts.version if model else "none"
+    version = model_version_label()
     key = similar_key(item_id, version, limit)
-
     cached = cache.get(key)
     if cached is not None:
         try:
@@ -387,24 +398,46 @@ def similar_items(
 
     source = db.get(FoodItem, item_id)
     if source is None:
-        return RecommendationResponse(
-            items=[], model_version=model.artifacts.version if model else None
-        )
+        return RecommendationResponse(items=[], model_version=version)
 
     rows = db.execute(
-        select(FoodItem, ItemNeighbor.distance, ItemNeighbor.rank)
+        select(FoodItem, ItemNeighbor.distance)
         .join(ItemNeighbor, ItemNeighbor.neighbor_id == FoodItem.id)
         .where(ItemNeighbor.food_item_id == item_id, FoodItem.is_available.is_(True))
         .order_by(ItemNeighbor.rank)
     ).all()
 
+    scored: list[tuple[FoodItem, float, str]] = [
+        # Distance is better when smaller; invert so the score sorts the same
+        # direction as every other score in the API.
+        (item, 1.0 / (1.0 + float(distance)), "collaborative")
+        for item, distance in rows
+    ]
+    used_content = False
+
+    if not scored:
+        content = _holder.content()
+        if content is not None:
+            pairs = content.similar_items(item_id, limit * 2)
+            ids = [pair[0] for pair in pairs]
+            by_id = {
+                item.id: item
+                for item in db.execute(
+                    _available_items_query().where(FoodItem.id.in_(ids))
+                ).scalars()
+            }
+            scored = [
+                (by_id[i], float(similarity), "content") for i, similarity in pairs if i in by_id
+            ]
+            used_content = bool(scored)
+
     recommended = []
-    # The same dish sold at two restaurants is two rows with the same name, and
-    # a carousel showing "New York Cheesecake" as similar to New York Cheesecake
-    # reads as a bug even though the model is right. Dedupe on name at serving
-    # time rather than corrupting the neighbour table, which is a pure artifact.
+    # The same dish sold at two restaurants is two rows, and a carousel showing
+    # "New York Cheesecake" as similar to New York Cheesecake reads as a bug
+    # even though the model is right. Deduped at serving time rather than in the
+    # neighbour table, which is a pure model artifact.
     seen_names = {source.name.casefold()}
-    for item, distance, _rank in rows:
+    for item, score, _origin in scored:
         name = item.name.casefold()
         if name in seen_names:
             continue
@@ -412,10 +445,12 @@ def similar_items(
         recommended.append(
             RecommendedItem(
                 item=FoodItemSummary.model_validate(item),
-                # Distance is better when smaller; invert it so the score
-                # sorts the same direction as every other score in the API.
-                score=round(1.0 / (1.0 + float(distance)), 4),
-                reason=f"Similar to {source.name}",
+                score=round(score, 4),
+                reason=(
+                    f"Also enjoyed by people who like {source.name}"
+                    if not used_content
+                    else f"Similar in style to {source.name}"
+                ),
                 source=RecommendationSource.SIMILAR_TO_ORDERED,
             )
         )
@@ -424,8 +459,8 @@ def similar_items(
 
     response = RecommendationResponse(
         items=recommended,
-        model_version=model.artifacts.version if model else None,
-        candidates_considered=len(rows),
+        model_version=version,
+        candidates_considered=len(scored),
         latency_ms=round((time.perf_counter() - started) * 1000, 2),
     )
     cache.set(key, response.model_dump(mode="json"), get_settings().cache_ttl_seconds)
@@ -439,9 +474,8 @@ def invalidate_user_recommendations(user_id: int, cache: Cache | None = None) ->
     which reads as the rating having been ignored.
     """
     cache = cache or get_cache()
-    model = get_model()
-    version = model.artifacts.version if model else "none"
-    for limit in (10, 20, 50):
+    version = model_version_label()
+    for limit in (10, 12, 20, 50):
         cache.delete(recommendations_key(user_id, version, limit))
 
 
