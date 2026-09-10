@@ -36,7 +36,13 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 1440
 
     # ---- Recommender ----------------------------------------------------
-    reco_alpha: float = 0.6
+    #: Blend weight: score = alpha * collaborative + (1 - alpha) * content.
+    #: 0.2 is not a guess - it is what the validation sweep in `ml.evaluate`
+    #: selected. The content model outperforms collaborative filtering on this
+    #: dataset, so the blend leans heavily on it. See docs/EVALUATION.md for why
+    #: that is probably an artifact of synthetic data rather than a general
+    #: result, and re-run the sweep before trusting it on real data.
+    reco_alpha: float = 0.2
     reco_min_user_ratings: int = 5
     reco_min_item_ratings: int = 3
     reco_candidate_target: int = 150

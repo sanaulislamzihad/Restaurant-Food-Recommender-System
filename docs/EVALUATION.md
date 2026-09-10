@@ -74,17 +74,29 @@ relevant if the held-out rating is ≥ 4.
 | global mean | 0.9689 | 0.7628 | 0.0173 | 0.0364 | 0.0257 | 6.3% | 0.532 | 0.964 |
 | item mean | 0.8870 | 0.7104 | 0.0190 | 0.0462 | 0.0331 | 5.0% | 0.303 | 0.965 |
 | most popular | — | — | 0.0445 | 0.0852 | 0.0681 | 14.6% | 0.978 | 0.954 |
-| **collaborative filtering** | **0.7268** | **0.5635** | **0.0575** | **0.1185** | **0.0908** | **74.2%** | 0.505 | **0.676** |
+| collaborative filtering | 0.7268 | 0.5635 | 0.0575 | 0.1185 | 0.0908 | **74.2%** | 0.505 | **0.676** |
+| **content (two-tower)** | **0.5716** | 0.4749 | **0.0711** | **0.1574** | **0.1163** | 62.9% | 0.504 | 0.709 |
+| hybrid (α = 0.2) | 0.5721 | **0.4709** | 0.0702 | 0.1519 | 0.1130 | 62.6% | 0.505 | 0.732 |
 
 `most popular` ranks by rating count, which is not a star rating, so reporting
 an RMSE for it would be a number on the wrong scale. It gets a dash rather than
 an invented value.
 
-**Collaborative filtering wins on every metric it can be measured on:**
+**Every learned model beats every baseline, and the content model beats
+collaborative filtering.** Against item-mean, the baseline that matters:
 
-- **18.1% lower RMSE** than item-mean (0.7268 vs 0.8870)
-- **174% higher NDCG@10** than item-mean, and **33% higher** than most-popular
-- **74.2% catalogue coverage** against 5–15% for every baseline
+| | collaborative filtering | content (two-tower) |
+| --- | --- | --- |
+| RMSE vs item-mean | 18.1% better | **35.6% better** |
+| NDCG@10 vs item-mean | 174% better | **251% better** |
+| vs most-popular (NDCG) | 33% better | **71% better** |
+
+Collaborative filtering keeps one clear advantage: **74.2% catalogue coverage
+against the content model's 62.9%**, and a lower Gini (0.676 vs 0.709). It
+spreads recommendations more widely, which is why the blend keeps it rather
+than dropping it. The section on α below explains why the content model leads
+here and why that ordering should not be expected to survive contact with real
+data.
 
 ### Reading the absolute numbers
 
@@ -93,12 +105,54 @@ structural reasons:
 
 1. **The random-ranking anchor is 0.0173.** The `global mean` row assigns every
    item an identical score, so its ordering is purely the random tiebreak — that
-   row *is* random ranking. CF is **3.3× random**.
+   row *is* random ranking. Collaborative filtering is **3.3× random** and the
+   content model **4.1×**.
 2. **Unrated means "not relevant" by convention.** Each user has roughly six
    held-out ratings among ~290 candidates. Any of the other 284 dishes they
    might have loved counts against precision, because nobody ever asked them.
    This depresses the absolute figure for every row equally, so the comparison
    between rows stays fair.
+
+## Choosing α, and the result nobody ordered
+
+α is selected on validation exactly as λ was — 0.6 was a configuration default,
+not a measured one, and reporting a hybrid built on an unexamined constant
+would present an arbitrary number as a result.
+
+| α | validation RMSE | validation NDCG@10 |
+| --- | --- | --- |
+| 0.0 (content only) | 0.6085 | 0.0987 |
+| **0.2** | **0.6052** | **0.1051** ← selected |
+| 0.4 | 0.6220 | 0.1017 |
+| 0.6 | 0.6562 | 0.0974 |
+| 0.8 | 0.7022 | 0.0946 |
+| 1.0 (collaborative only) | 0.7576 | 0.0880 |
+
+**The content model beats collaborative filtering on every metric, and the
+hybrid does not beat the content model alone.** Selecting α honestly moved the
+hybrid from 0.6240 to 0.5721 RMSE, but content-only still edges it on test
+(0.5716 / 0.1163 against 0.5721 / 0.1130). α = 0.2 won on validation and came
+back fractionally behind on test, a gap well inside the noise of a single split.
+
+This inverts the architecture the brief assumes, where collaborative filtering
+is the main event and content-based filtering is the cold-start fallback. It is
+worth being precise about why, because the reason is almost certainly **an
+artifact of the data being synthetic**:
+
+The generator produces a rating from a cuisine affinity, a spice-tolerance
+penalty, a per-item quality term and noise. The content model receives cuisine,
+spice level, the user's stated spice tolerance and their per-cuisine rating
+history *as direct inputs* — so it is being handed the generator's own
+parameters and can very nearly invert them. Collaborative filtering has to
+rediscover that same structure from sparse co-ratings, which is a strictly
+harder problem.
+
+Real customers are not generated from a tidy function of the features the
+catalogue happens to record. On real data the usual ordering — collaborative
+filtering ahead on users with history, content-based carrying the cold start —
+is far more likely, which is why the serving code keeps both and blends them
+rather than dropping the collaborative half on the strength of this table.
+**Re-run the sweep before trusting α = 0.2 anywhere real.**
 
 ## Popularity bias
 
@@ -133,12 +187,15 @@ The axis is logarithmic because the first few steps dwarf everything after them.
 
 Read this section before quoting any number above.
 
-1. **The data is synthetic, and I planted the structure the model finds.** The
+1. **The data is synthetic, and I planted the structure the models find.** The
    three taste clusters were written into the generator by hand. Collaborative
    filtering recovering them is therefore partly circular: it confirms the
    pipeline works end to end, and it does *not* establish that the same
    architecture would find real structure in a real restaurant's order log. This
-   is the largest caveat on the page by some distance.
+   is the largest caveat on the page by some distance, and the section above on
+   α is what it looks like when that caveat stops being theoretical — the
+   content model wins here largely because it is fed the generator's own
+   parameters.
 
 2. **The matrix is denser than reality.** 9.93% against 1–5% for a typical
    ordering platform. Sparser data would hurt collaborative filtering more than
@@ -163,8 +220,11 @@ Read this section before quoting any number above.
 6. **Cold-start items are barely represented.** 299 of 302 items appear in the
    test set, so item-side cold start is essentially untested by this table.
 
-7. **Only λ was tuned**, over a coarse six-point grid. The latent dimension is
-   fixed at n=10 and the learning rate at 0.1; neither was searched.
+7. **Only λ and α were tuned**, over coarse six-point grids. The collaborative
+   latent dimension is fixed at n=10 and its learning rate at 0.1; the towers
+   are fixed at 256→128→32 with no architecture search at all. None of those
+   were tuned, so the content model's lead is not the result of it having been
+   optimised harder — if anything the opposite.
 
 8. **Relevance is a threshold, not a preference.** Treating ≥4 stars as "liked"
    discards the difference between a 4 and a 5, and NDCG is computed on binary
