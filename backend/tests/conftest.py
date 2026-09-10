@@ -18,7 +18,15 @@ from pathlib import Path
 import pytest
 
 _TEST_DIR = Path(tempfile.mkdtemp(prefix="foodrec-tests-"))
-os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{(_TEST_DIR / 'test.db').as_posix()}"
+
+# CI runs the whole suite a second time against Postgres by setting
+# TEST_DATABASE_URL. Everything the app does is dialect-agnostic in principle,
+# but "in principle" is exactly the kind of claim that turns out to be false the
+# first time it matters, so it is checked rather than asserted.
+os.environ["DATABASE_URL"] = os.environ.get(
+    "TEST_DATABASE_URL",
+    f"sqlite+pysqlite:///{(_TEST_DIR / 'test.db').as_posix()}",
+)
 os.environ["REDIS_URL"] = ""
 os.environ["MODEL_DIR"] = str(_TEST_DIR / "models")
 os.environ["JWT_SECRET_KEY"] = "test-secret-not-used-anywhere-real"

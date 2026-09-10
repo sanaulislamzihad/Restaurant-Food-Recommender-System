@@ -1,0 +1,197 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push supersedes an in-flight run on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "22"
+
+jobs:
+  backend-quality:
+    name: Backend lint & types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        working-directory: backend
+        # The ml extra pulls TensorFlow, which mypy needs to see for the modules
+        # that import it.
+        run: pip install -e ".[dev,ml]"
+
+      - name: ruff
+        working-directory: backend
+        run: ruff check .
+
+      - name: black
+        working-directory: backend
+        run: black --check .
+
+      - name: mypy
+        working-directory: backend
+        # Run from backend/ so the overrides in pyproject.toml apply; from the
+        # repository root mypy resolves a different config and reports errors
+        # that do not exist.
+        run: mypy app ml scripts
+
+  backend-tests-sqlite:
+    name: Backend tests (SQLite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        working-directory: backend
+        run: pip install -e ".[dev,ml]"
+
+      - name: pytest
+        working-directory: backend
+        env:
+          TF_CPP_MIN_LOG_LEVEL: "3"
+          JWT_SECRET_KEY: ci-secret-not-used-anywhere-real
+        run: pytest -q
+
+  backend-tests-postgres:
+    name: Backend tests (Postgres)
+    runs-on: ubuntu-latest
+
+    # The project targets Postgres but every local run is on SQLite. Without
+    # this job "it is dialect-portable" is an untested claim, and the failure
+    # mode is a migration or query that only breaks in production.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: foodrec
+          POSTGRES_PASSWORD: foodrec
+          POSTGRES_DB: foodrec_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U foodrec -d foodrec_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        working-directory: backend
+        run: pip install -e ".[dev,ml]"
+
+      - name: Migrations apply to a real Postgres
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://foodrec:foodrec@localhost:5432/foodrec_test
+        # upgrade, then downgrade, then upgrade again: a migration that cannot
+        # be rolled back is not one anybody should deploy on a Friday.
+        run: |
+          alembic upgrade head
+          alembic check
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: Seed and verify the cluster structure
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://foodrec:foodrec@localhost:5432/foodrec_test
+          TF_CPP_MIN_LOG_LEVEL: "3"
+        run: |
+          python -m scripts.seed --reset
+          python -m scripts.verify_clusters
+
+      - name: pytest against Postgres
+        working-directory: backend
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://foodrec:foodrec@localhost:5432/foodrec_ci
+          TF_CPP_MIN_LOG_LEVEL: "3"
+          JWT_SECRET_KEY: ci-secret-not-used-anywhere-real
+        run: |
+          psql "postgresql://foodrec:foodrec@localhost:5432/postgres" \
+            -c "CREATE DATABASE foodrec_ci;"
+          pytest -q
+
+  ml-pipeline:
+    name: ML pipeline end to end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        working-directory: backend
+        run: pip install -e ".[dev,ml]"
+
+      # Seed, train both models, build the neighbour index and evaluate. Slower
+      # than the unit tests, and it is the only thing that would catch the two
+      # halves drifting apart - a feature vector that no longer matches the
+      # weights, or an artifact the serving code cannot load.
+      - name: Train and evaluate
+        working-directory: backend
+        env:
+          TF_CPP_MIN_LOG_LEVEL: "3"
+        run: |
+          alembic upgrade head
+          python -m scripts.seed --reset
+          python -m scripts.verify_clusters
+          python -m ml.train_cf --iterations 120
+          python -m ml.train_content --epochs 8
+          python -m ml.build_neighbors
+          python -m ml.evaluate --iterations 120 --no-content
+
+  frontend:
+    name: Frontend lint & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+
+      - name: Type check and build
+        working-directory: web
+        run: npm run build
